@@ -144,7 +144,7 @@ game:
 | Developer options | asset browser, viewers and test screens for working on the project |
 | Quit | |
 
-Keys: **F11** toggles fullscreen and **F12** saves a screenshot to
+Keys: **F1** shows the keyboard controls, **F11** toggles fullscreen and **F12** saves a screenshot to
 `screenshots/` in the user data folder. In PC VR, **F9** recenters the view.
 
 ### User data folder

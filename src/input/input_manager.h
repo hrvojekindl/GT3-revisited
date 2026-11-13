@@ -251,7 +251,8 @@ public:
     // Player 1 with the keyboard off but bindings only the keyboard can drive (no device in use,
     // custom bindings with no controller source, or a wheel SDL doesn't list on the wheel layout,
     // whose button numbers are a guess): the keyboard still drives them, so the game can't be left
-    // with no way to control it.
+    // with no way to control it. Player 2 with the keyboard off and no controller: their own keys
+    // drive them, so a second player can join on the keyboard.
     bool keyboard_fallback(int player) const;
     // The keyboard drives this player: enabled, Keyboard only, or the fallback above.
     bool keyboard_active(int player) const {

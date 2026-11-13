@@ -370,7 +370,11 @@ void InputManager::assign_devices() {
 
 bool InputManager::keyboard_fallback(int player) const {
     const Player& p = players_[player];
-    if (player != 0 || p.keyboard) return false;
+    if (p.keyboard) return false;
+    // Player 2's keys are none of player 1's (input_player_keys_apart), so a second player without a
+    // controller can join on the keyboard without a trip to Settings.
+    if (player == 1) return !find_device(p.device);
+    if (player != 0) return false;
     if (p.menu.keyboard_only()) return true;
     // The wheel layout's buttons are the usual numbers: a wheel SDL doesn't list may have others.
     const Device* d = find_device(p.device);

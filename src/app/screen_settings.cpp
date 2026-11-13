@@ -1385,9 +1385,10 @@ private:
 
             if (!in.keyboard_only(p))
                 toggle("Keyboard",
-                       in.keyboard_fallback(p)
-                           ? "Off, but no controller drives player 1, so the keyboard still does."
-                           : "The keyboard also drives this player (alongside the controller).",
+                       !in.keyboard_fallback(p) ? "The keyboard also drives this player (alongside the controller)."
+                       : p == 1 ? "Off, but player 2 has no controller, so their keys (I J K L and around) still "
+                                  "drive them."
+                                : "Off, but no controller drives player 1, so the keyboard still does.",
                        in.keyboard_enabled(p),
                        [a, p](bool v) {
                            a->input().set_keyboard(p, v);

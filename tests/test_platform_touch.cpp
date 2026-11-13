@@ -590,13 +590,43 @@ TEST(input_keyboard_only) {
     input.save(out);
     CHECK(out.get("player1", "controller") == "keyboard" && out.get("player1", "keyboard") == "off");
     CHECK(out.get("player1", "preset") == "keyboard" && out.get("player1", "device") == "auto"); // older builds
-    // Auto with nothing connected: the keyboard's bindings; player 1 keeps the keyboard, player 2
-    // (keyboard off) has nothing.
+    // Auto with nothing connected: the keyboard's bindings; player 1 keeps the keyboard, and player 2
+    // (keyboard off) gets their own keys, none of player 1's.
     input.set_device_filter(0, "auto");
     input.set_device_filter(1, "auto");
     CHECK(!input.keyboard_only(0) && input.kind(0) == DeviceKind::Keyboard && input.keyboard_fallback(0));
-    CHECK(!input.keyboard_active(1));
+    CHECK(!input.keyboard_enabled(1) && input.keyboard_fallback(1) && input.keyboard_active(1));
     CHECK(press_return(0) && !press_return(1));
+    CHECK(press(1, SDL_SCANCODE_O) && !press(0, SDL_SCANCODE_O));
+}
+
+// Player 2 on a controller keeps the Keyboard setting (off): the keys are theirs only without one.
+TEST(input_player2_keyboard_without_controller) {
+    if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) SKIP("no SDL gamepad subsystem");
+    SDL_VirtualJoystickDesc desc;
+    SDL_INIT_INTERFACE(&desc);
+    desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+    desc.name = "Test Pad";
+    desc.naxes = 6;
+    desc.nbuttons = 15;
+    const SDL_JoystickID a = SDL_AttachVirtualJoystick(&desc);
+    const SDL_JoystickID b = SDL_AttachVirtualJoystick(&desc);
+    CHECK(a != 0 && b != 0);
+    {
+        InputManager in; // (closes its gamepads before the subsystem quits)
+        in.load(IniDocument::parse("[player2]\nkeyboard = off\n"));
+        SDL_UpdateJoysticks();
+        for (SDL_Event e; SDL_PollEvent(&e);) in.handle_event(e);
+        in.update(1.0 / 60);
+        CHECK(in.kind(1) == DeviceKind::Pad && !in.keyboard_active(1)); // a pad each
+        SDL_DetachVirtualJoystick(b);
+        for (SDL_Event e; SDL_PollEvent(&e);) in.handle_event(e);
+        in.update(1.0 / 60);
+        CHECK(in.keyboard_fallback(1) && in.keyboard_active(1)); // the second pad gone: the keys
+        CHECK(!in.keyboard_fallback(0));                         // player 1 keeps theirs
+    }
+    if (a) SDL_DetachVirtualJoystick(a);
+    SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
 }
 
 // Player 1 with the keyboard off on a wheel SDL doesn't list: the wheel layout's button numbers are

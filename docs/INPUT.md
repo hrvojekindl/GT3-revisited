@@ -73,14 +73,19 @@ keys sit around I / J / K / L, apart from player 1's, so both can share one
 keyboard: I/K/J/L = D-pad, O = Cross, U = Triangle, ; = Circle, H = Square,
 comma/period = L1/R1, N/M = L2/R2, ' = Start, / = Select. No default key is in
 both players' sets. (While driving with the modern layout the keyboard has its
-own race keys, below.) On any screen, F11 toggles fullscreen and F12 saves a
-screenshot.
+own race keys, below.) On any screen, F11 toggles fullscreen, F12 saves a
+screenshot and F1 shows the keyboard's controls over the game: each player's driving
+and menu keys as their bindings stand (`input/key_help.h`), player 2's while their
+keyboard drives them. On a Mac keyboard, hold fn for the F keys.
 
 **Keyboard** (`keyboard = off`, hidden under Keyboard only) stops the keyboard
 also driving a player, except player 1 with buttons only the keyboard can
 drive (no device connected, custom bindings with only keys, or a wheel SDL
 doesn't list on the wheel layout, whose button numbers may not be that wheel's):
 their keyboard stays live, so the game can't be left with no way to control it.
+Player 2 with no controller of their own also keeps their keys (none of player 1's),
+so a second player can join a split-screen race on the keyboard without a trip to
+Settings; with a controller, the setting holds.
 Keyboard only always drives the player with the keyboard.
 
 Configs from before the Controller choice used `preset` (`racing`, `classic`,

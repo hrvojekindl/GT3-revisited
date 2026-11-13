@@ -56,6 +56,7 @@ Testing variables (in the environment, or --env NAME=value):
   GT3R_SKIP_MOVIES=1           game-flow movies end at once
   GT3R_PHONE=1                 desktop: a 20:9 phone-shaped window with the touch UI
   GT3R_TOUCH_SHOW=1            show the touch controls
+  GT3R_KEY_HELP=1              start with the keyboard help (F1) shown
   GT3R_SETTINGS_TAB=<n>        Settings opens on page n
   GT3R_MOD_ZIP=<archive>       the Mods screen installs this archive
 

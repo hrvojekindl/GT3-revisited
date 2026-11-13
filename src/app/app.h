@@ -335,6 +335,12 @@ private:
     int fps_frames_ = 0;
     double fps_time_ = 0, fps_shown_ = 0;
     void draw_fps(bool frontend);
+    // F1: the keyboard's controls over every screen, as the players' bindings stand (input/key_help.h).
+    bool key_help_ = false;
+    void draw_key_help();
+    // Draws over the whole frame in UI units (Ui::kHeight tall at `zoom` 1, the window's width),
+    // whatever the screen's layout: `draw` gets the frame's size in them.
+    void draw_over(const std::function<void(float width, float height)>& draw, float zoom = 1.0f);
     bool touch_ui_ = false;  // phone/tablet sizing (mobile builds, or GT3R_PHONE)
     bool phone_sim_ = false; // GT3R_PHONE=1: desktop window shaped like a 20:9 phone
     std::optional<platform::DisplayInsets> display_insets_; // phones: cutout and corner radius (pixels)

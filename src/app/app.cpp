@@ -12,6 +12,7 @@
 #include "game/gt_mode_menu.h"
 #include "game/gt_save.h"
 #include "game/save_folder.h"
+#include "input/key_help.h"
 #include "platform/document_tree.h"
 #include "platform/aspect.h"
 #include "platform/ios_files.h"
@@ -134,6 +135,7 @@ bool App::init(int argc, char** argv) {
         win_flags &= ~SDL_WINDOW_FULLSCREEN;
     }
     touch_ui_ = platform::is_mobile() || phone_sim_;
+    if (const char* h = SDL_getenv("GT3R_KEY_HELP"); h && *h == '1') key_help_ = true; // screenshots
     window_ = SDL_CreateWindow("GT3 Revisited", phone_sim_ ? 1170 : 1280, phone_sim_ ? 540 : 720, win_flags);
     if (!window_) {
         LOG_ERROR("Window creation failed: %s", SDL_GetError());
@@ -561,6 +563,106 @@ void App::draw_fps(bool frontend) {
     SDL_SetRenderLogicalPresentation(renderer_, lw, lh, mode);
 }
 
+void App::draw_key_help() {
+    if (!key_help_ || !input_) return;
+    struct Column {
+        int player = 0;
+        std::string heading;
+        KeyHelpSection section;
+        float action_w = 0, width = 0;
+    };
+    constexpr float kLine = Ui::kChar + 4, kGap = 18, kPad = 12, kKeysGap = 10;
+    std::vector<Column> cols;
+    for (int p = 0; p < InputManager::kMaxPlayers; ++p) {
+        const bool active = input_->keyboard_active(p);
+        if (p > 0 && !active) continue; // player 2 on a controller of their own
+        std::string heading = p == 0 ? "Player 1" : "Player 2";
+        if (!active) heading += " (keyboard off: Settings > Controls)";
+        for (KeyHelpSection& s : key_help(*input_, p)) {
+            Column c{p, heading + " - " + s.title, std::move(s)};
+            for (const KeyHelpRow& r : c.section.rows) {
+                c.action_w = std::max(c.action_w, Ui::text_width(r.action));
+                c.width = std::max(c.width, Ui::text_width(r.keys));
+            }
+            c.width = std::max(c.action_w + kKeysGap + c.width, Ui::text_width(c.heading));
+            cols.push_back(std::move(c));
+        }
+    }
+    const char* footer = "F1 closes   F11 full screen   F12 screenshot   (Mac: hold fn for the F keys)";
+
+    // All the columns in one row, or a row per player: whichever needs less shrinking to fit the screen.
+    struct Layout {
+        std::vector<std::vector<const Column*>> rows;
+        float w = 0, h = 0, zoom = 1;
+    };
+    int pw = 0, ph = 0;
+    SDL_GetCurrentRenderOutputSize(renderer_, &pw, &ph);
+    const float screen_w = float(pw) * Ui::kHeight / float(std::max(ph, 1)), screen_h = Ui::kHeight;
+    auto lay_out = [&](bool per_player) {
+        Layout l;
+        for (const Column& c : cols) {
+            if (l.rows.empty() || (per_player && l.rows.back().back()->player != c.player)) l.rows.emplace_back();
+            l.rows.back().push_back(&c);
+        }
+        l.h = kPad + kLine * 1.5f + kPad + kLine;
+        for (const auto& row : l.rows) {
+            float w = 0;
+            size_t n = 0;
+            for (const Column* c : row) w += (w > 0 ? kGap : 0) + c->width, n = std::max(n, c->section.rows.size());
+            l.w = std::max(l.w, w);
+            l.h += kLine * float(n + 2);
+        }
+        l.w = std::max(l.w, Ui::text_width(footer)) + 2 * kPad;
+        l.zoom = std::min({1.0f, (screen_w - 8) / l.w, (screen_h - 8) / l.h});
+        return l;
+    };
+    Layout one = lay_out(false), split = lay_out(true);
+    const Layout& l = split.zoom > one.zoom ? split : one;
+
+    draw_over(
+        [&](float width, float height) {
+            const float x0 = std::round((width - l.w) / 2), y0 = std::round((height - l.h) / 2);
+            ui_->fill(0, 0, width, height, Color{0, 0, 0, 140});
+            ui_->fill_round(x0, y0, l.w, l.h, 6, Color{18, 20, 28, 240});
+            ui_->frame_round(x0, y0, l.w, l.h, 6, 1, colors::kOutline);
+            float y = y0 + kPad;
+            ui_->text(x0 + kPad, y, "Keyboard controls", colors::kAccent);
+            y += kLine * 1.5f;
+            for (const auto& row : l.rows) {
+                float x = x0 + kPad;
+                size_t n = 0;
+                for (const Column* c : row) {
+                    ui_->text(x, y, c->heading, colors::kText);
+                    float ry = y + kLine * 1.25f;
+                    for (const KeyHelpRow& r : c->section.rows) {
+                        ui_->text(x, ry, r.action, colors::kDim);
+                        ui_->text(x + c->action_w + kKeysGap, ry, r.keys, colors::kText);
+                        ry += kLine;
+                    }
+                    n = std::max(n, c->section.rows.size());
+                    x += c->width + kGap;
+                }
+                y += kLine * float(n + 2);
+            }
+            ui_->text(x0 + kPad, y0 + l.h - kPad - Ui::kChar, footer, colors::kDim);
+        },
+        l.zoom);
+}
+
+void App::draw_over(const std::function<void(float width, float height)>& draw, float zoom) {
+    int lw = 0, lh = 0;
+    SDL_RendererLogicalPresentation mode = SDL_LOGICAL_PRESENTATION_DISABLED;
+    SDL_GetRenderLogicalPresentation(renderer_, &lw, &lh, &mode);
+    SDL_SetRenderLogicalPresentation(renderer_, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+    int pw = 0, ph = 0;
+    SDL_GetCurrentRenderOutputSize(renderer_, &pw, &ph);
+    const float k = float(std::max(ph, 1)) / Ui::kHeight * zoom; // pixels per UI unit
+    SDL_SetRenderScale(renderer_, k, k);
+    draw(float(pw) / k, float(ph) / k);
+    SDL_SetRenderScale(renderer_, 1, 1);
+    SDL_SetRenderLogicalPresentation(renderer_, lw, lh, mode);
+}
+
 platform::Aspect App::aspect() const {
 #if GT3R_XR
     if (xr_) return platform::Aspect::Wide;
@@ -846,6 +948,7 @@ SDL_AppResult App::iterate() {
     touch_.set_safe_area(safe_area_window());
     touch_.render(*ui_);
     draw_fps(shown && shown->adaptive_ui());
+    draw_key_help();
     if (phone_sim_) draw_phone_mask();
     if (pointer_shown_) { // a scripted pointer's arrow (screenshots)
         const float x = pointer_x_, y = pointer_y_;
@@ -957,6 +1060,7 @@ SDL_AppResult App::event(const SDL_Event& e) {
     if (e.type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
     // Android may end a backgrounded app without a quit.
     if (e.type == SDL_EVENT_WILL_ENTER_BACKGROUND || e.type == SDL_EVENT_TERMINATING) remember_race_scale();
+    const bool was_capturing = input_->capturing();
     input_->handle_event(e);
     // Back in front on a computer: the controllers' motors as they should be now (a stop sent while away can be lost).
     if (e.type == SDL_EVENT_WINDOW_FOCUS_GAINED && !platform::is_mobile()) input_->window_focus_gained();
@@ -974,6 +1078,9 @@ SDL_AppResult App::event(const SDL_Event& e) {
         set_dialog_result(e.drop.data);
     if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F12 && !e.key.repeat) screenshot_requested_ = true;
     if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F11 && !e.key.repeat) set_fullscreen(!fullscreen());
+    // (Not while Settings waits for a key to bind: F1 is the key then. The capture ends on this very event.)
+    if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F1 && !e.key.repeat && !was_capturing)
+        key_help_ = !key_help_;
 #if GT3R_XR
     if (xr_ && e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F9 && !e.key.repeat) xr_->recenter();
 #endif
