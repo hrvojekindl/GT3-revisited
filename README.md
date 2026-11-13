@@ -238,7 +238,7 @@ are only there:
 | `[input] background` | `on` / `off` | desktop: controllers and wheels keep driving the game while another window is in front, e.g. on a second monitor (default off; Settings → Controls). The keyboard works only in the game's window |
 | `[player1]`, `[player2]` | `controller` (auto, a device name, or keyboard), `keyboard`, `race`, `rumble` (auto, modern, gt3); `phone_vibration` (player 1, Android) | see [INPUT](docs/INPUT.md#controller) |
 | `[player1.actions]`, `[player2.actions]` | `next_song`, `previous_song` | the song controls' chords ([INPUT](docs/INPUT.md#song-controls)) |
-| `[ffb]` | see [INPUT](docs/INPUT.md) | DualSense/Xbox triggers and wheel force feedback |
+| `[ffb]` | see [INPUT](docs/INPUT.md) | DualSense/Xbox triggers, wheel force feedback and the DualSense / DualShock 4 light bar's shift light (`lightbar`) |
 | `[touch]` | see [INPUT](docs/INPUT.md#touch-controls-phones-and-tablets) | on-screen controls on phones and tablets; Customize layout moves, resizes and hides each one |
 | `[online] server` | host name | relay server (default `gt3r.gameversions.com`; set in the lobby) |
 | `[online] update_check` | `on` / `off` | ask the relay server for a newer version at startup (Settings → Online) |

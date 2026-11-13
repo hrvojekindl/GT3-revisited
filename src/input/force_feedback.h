@@ -15,6 +15,8 @@
 //   spring   = 0.6     ; self-centring spring at speed (0..1)
 //   trigger_force = 0.6 ; DualSense brake resistance (0..1)
 //   invert   = off     ; flip the wheel's steering force direction
+//   lightbar = on      ; DualSense / DualShock 4 light bar: the player's colour, a shift light while
+//                      ; driving (not under `enabled`: it is no force)
 
 #include "base/bytes.h"
 
@@ -43,8 +45,16 @@ struct ForceFeedbackState {
     bool wheel_on = true;    // the GT FORCE Force Feedback option: the wheel
 };
 
+// The revs as the light bar shows them (InputManager::set_shift_light), sent every frame while a player drives.
+struct ShiftLightState {
+    float rpm = 0;           // engine speed
+    float shift_rpm = 0;     // the HUD's shift point (HudData::shift_rpm); 0: no shift light
+    bool rev_limiter = false; // on the fuel cut
+};
+
 struct ForceFeedbackConfig {
     bool enabled = true, triggers = true, wheel = true, invert = false;
+    bool lightbar = true;
     float strength = 1.0f, spring = 0.6f, trigger_force = 0.6f;
     float steering = 1.0f;   // the steering force's share of `strength`, 0..1 (0: the spring alone)
     float understeer = 0.5f; // Modern: how much of the wheel's force goes at full understeer, 0..1
@@ -94,6 +104,18 @@ bool wheel_rerun_due(double started, double now);
 float impulse_brake(const ForceFeedbackState& s, double t);
 float impulse_throttle(const ForceFeedbackState& s);
 
+struct LedColor {
+    u8 r = 0, g = 0, b = 0;
+    bool operator==(const LedColor&) const = default;
+};
+// A player's own light bar colour, dim as SDL's: player 1 blue, player 2 pink (a PlayStation's second
+// pad is red, which the shift light flashes).
+LedColor player_led(int player);
+// The light bar as a shift light: the player's colour up to 60 % of the shift point, then green, yellow and
+// red as the revs climb (in 12 steps, so the pad isn't sent a colour every frame), flashing red at 8 Hz
+// from the shift point and on the rev limiter. `time` in seconds.
+LedColor shift_light_led(const ShiftLightState& s, int player, double time);
+
 } // namespace ffb
 
 // Device side: owns haptic handles and avoids resending unchanged effects.
@@ -120,6 +142,9 @@ public:
     // doesn't, whatever a driver says of force feedback: this tells a wheel from a pad SDL has no
     // mapping for (is_wheel). Opens the haptic device and closes it again.
     static bool has_wheel_forces(SDL_Joystick* joystick);
+    // The light bar of `player`'s gamepad (pads without one are left alone): the shift light for `s`,
+    // or the player's colour when `s` is null (not driving). Only sent when the colour changes.
+    void light(SDL_JoystickID id, SDL_Gamepad* gamepad, int player, const ShiftLightState* s, double time);
 
 private:
     struct Dev {
@@ -138,6 +163,10 @@ private:
         double effects_at = 0;               // when the wheel's effects last (re)started (ffb::wheel_rerun_due)
         int spring_id = -1, constant_id = -1;
         int spring_coef = -1, constant_level = 0x7fffffff;
+        bool has_led = false; // the pad has an RGB light bar, as of led_asked
+        double led_asked = -1e9;
+        bool led_sent = false;
+        ffb::LedColor led; // the colour sent
     };
     Dev& dev(SDL_JoystickID id);
     void stop(Dev& d);

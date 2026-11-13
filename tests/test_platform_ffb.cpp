@@ -221,6 +221,52 @@ TEST(ffb_config_roundtrip) {
     CHECK(d.gt3_wheel() && std::fabs(d.steering - 0.25f) < 1e-3f && d.understeer == 1.0f);
     CHECK(ForceFeedbackConfig::load(IniDocument::parse("[ffb]\nwheel_mode = sideways\n")).wheel_mode == "auto");
     CHECK(ForceFeedbackConfig::load(IniDocument::parse("[ffb]\nwheel_mode = modern\n")).wheel_mode == "modern");
+    CHECK(c.lightbar && d.lightbar); // on by default
+    IniDocument dark;
+    ForceFeedbackConfig::load(IniDocument::parse("[ffb]\nlightbar = off\n")).save(dark);
+    CHECK(!ForceFeedbackConfig::load(dark).lightbar);
+}
+
+TEST(ffb_shift_light) {
+    using ffb::LedColor;
+    ShiftLightState s;
+    s.shift_rpm = 7000;
+    s.rpm = 3000; // under 60 % of the shift point: the player's colour
+    CHECK(ffb::shift_light_led(s, 0, 0) == ffb::player_led(0));
+    CHECK(ffb::shift_light_led(s, 1, 0) == ffb::player_led(1));
+    CHECK(!(ffb::player_led(0) == ffb::player_led(1)));
+    s.rpm = 4250; // from 60 %: green
+    CHECK(ffb::shift_light_led(s, 0, 0) == (LedColor{0, 255, 0}));
+    s.rpm = 5700; // from 80 %: yellow
+    CHECK(ffb::shift_light_led(s, 0, 0) == (LedColor{255, 255, 0}));
+    s.rpm = 6990; // just short of the shift point: red, steady
+    const LedColor last = ffb::shift_light_led(s, 0, 0);
+    CHECK(last.r == 255 && last.g < 64 && last.b == 0);
+    CHECK(ffb::shift_light_led(s, 0, 0.07) == last);
+    s.rpm = 7000; // at the shift point: red flashing at 8 Hz
+    CHECK(ffb::shift_light_led(s, 0, 0.01) == (LedColor{255, 0, 0}));
+    CHECK(ffb::shift_light_led(s, 0, 0.07) == LedColor{});
+    s.rpm = 6000, s.rev_limiter = true; // the fuel cut flashes too
+    CHECK(ffb::shift_light_led(s, 0, 0.07) == LedColor{});
+    // Stepped: revs a little apart show the same colour (the pad isn't sent one every frame).
+    s.rev_limiter = false;
+    s.rpm = 4700;
+    const LedColor a = ffb::shift_light_led(s, 0, 0);
+    s.rpm = 4720;
+    CHECK(ffb::shift_light_led(s, 0, 0) == a);
+    // No shift point (a car without one): the player's colour.
+    s.shift_rpm = 0, s.rpm = 9000;
+    CHECK(ffb::shift_light_led(s, 1, 0) == ffb::player_led(1));
+}
+
+TEST(ffb_shift_light_without_devices) {
+    InputManager input; // no devices: nothing to light, no crash
+    ShiftLightState s;
+    s.rpm = 7000, s.shift_rpm = 7000;
+    input.set_shift_light(0, s);
+    input.set_shift_light(1, s);
+    input.update(0.016);
+    input.update(0.5);
 }
 
 TEST(ffb_input_manager_without_devices) {

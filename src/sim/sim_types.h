@@ -130,6 +130,8 @@ struct VehicleSetup {
     float rev_limit_rpm = 7000;   // fuel cut (tach redline)
     float max_rpm = 8000;         // sensible tach scale end
     float upshift_rpm = 6800;     // first-gear full-throttle shift point (shift light)
+    // Where the HUD's red band and shift light start (and the controller's light bar flashes).
+    float shift_light_rpm() const { return upshift_rpm > 0 ? upshift_rpm : rev_limit_rpm - 500; }
     bool has_turbo = false;
     float max_boost = 0;          // cap - 1 (physics §2.3), same unit as VehicleTelemetry::boost
 };

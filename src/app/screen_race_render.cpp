@@ -402,7 +402,7 @@ HudData RaceScreen::hud_data(int player) {
     d.speed_kmh = s.speed_kmh;
     d.rpm = s.engine_rpm;
     d.rev_limit_rpm = su.rev_limit_rpm;
-    d.shift_rpm = su.upshift_rpm > 0 ? su.upshift_rpm : su.rev_limit_rpm - 500;
+    d.shift_rpm = su.shift_light_rpm();
     d.onboard = cam.incar_hud();
     if (!car_.ratios.empty() && car_.final_drive > 0)
         d.top_speed_kmh = car_.limit_rpm / 60.0f * 2 * 3.14159f * car_.wheels.radius[1] /

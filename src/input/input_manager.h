@@ -155,6 +155,9 @@ public:
     // feedback".
     void set_force_feedback(int player, const ForceFeedbackState& state);
     void stop_force_feedback(int player) { players_[player].ffb_age = 1e9; }
+    // The revs for the light bar's shift light (call every frame while driving, whatever the Vibration
+    // option); the pad goes back to the player's colour ~0.25 s after the last call ([ffb] lightbar).
+    void set_shift_light(int player, const ShiftLightState& state);
     const ForceFeedbackConfig& ffb_config() const { return ffb_.config(); }
     void set_ffb_config(const ForceFeedbackConfig& c) { ffb_.configure(c); }
 
@@ -345,6 +348,8 @@ private:
         std::array<std::vector<bool>, kPadActionCount> chord_down; // per chord, last update()
         ForceFeedbackState ffb;
         double ffb_age = 1e9; // seconds since set_force_feedback()
+        ShiftLightState shift_light;
+        double shift_light_age = 1e9; // seconds since set_shift_light()
     };
 
     void add_device(SDL_JoystickID id);

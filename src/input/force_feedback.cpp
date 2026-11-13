@@ -79,6 +79,7 @@ ForceFeedbackConfig ForceFeedbackConfig::load(const IniDocument& ini) {
     c.triggers = parse_bool(get("triggers"), c.triggers);
     c.wheel = parse_bool(get("wheel"), c.wheel);
     c.invert = parse_bool(get("invert"), c.invert);
+    c.lightbar = parse_bool(get("lightbar"), c.lightbar);
     c.strength = parse_float(get("strength"), c.strength, 0.0f, 2.0f);
     c.spring = parse_float(get("spring"), c.spring, 0.0f, 1.0f);
     c.trigger_force = parse_float(get("trigger_force"), c.trigger_force, 0.0f, 1.0f);
@@ -100,6 +101,7 @@ void ForceFeedbackConfig::save(IniDocument& ini) const {
     ini.set("ffb", "understeer", fmt(understeer));
     ini.set("ffb", "trigger_force", fmt(trigger_force));
     ini.set("ffb", "invert", invert ? "on" : "off");
+    ini.set("ffb", "lightbar", lightbar ? "on" : "off");
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +212,19 @@ float impulse_brake(const ForceFeedbackState& s, double t) {
 }
 
 float impulse_throttle(const ForceFeedbackState& s) { return s.triggers_on ? impulse_level(s.traction) : 0.0f; }
+
+LedColor player_led(int player) { return player == 1 ? LedColor{48, 0, 40} : LedColor{0, 0, 64}; }
+
+LedColor shift_light_led(const ShiftLightState& s, int player, double time) {
+    constexpr float kFrom = 0.6f; // of the shift point, where the light starts
+    constexpr int kSteps = 12;
+    if (s.shift_rpm <= 0) return player_led(player);
+    const float x = s.rpm / s.shift_rpm;
+    if (x >= 1.0f || s.rev_limiter) return std::fmod(time * 8.0, 1.0) < 0.5 ? LedColor{255, 0, 0} : LedColor{};
+    if (x < kFrom) return player_led(player);
+    const float t = std::floor((x - kFrom) / (1.0f - kFrom) * kSteps) / kSteps; // 0 green, 0.5 yellow, 1 red
+    return t < 0.5f ? LedColor{byte01(t * 2.0f), 255, 0} : LedColor{255, byte01(2.0f - t * 2.0f), 0};
+}
 
 } // namespace ffb
 
@@ -428,6 +443,24 @@ void ForceFeedback::rumbling(SDL_JoystickID id, u8 low, u8 high) {
     Dev& d = dev(id);
     d.rumble_low = low, d.rumble_high = high;
     d.rumble_ticks = SDL_GetTicks();
+}
+
+void ForceFeedback::light(SDL_JoystickID id, SDL_Gamepad* gamepad, int player, const ShiftLightState* s,
+                          double time) {
+    if (!gamepad || !cfg_.lightbar) return;
+    Dev& d = dev(id);
+    // Asked again every 2 s while there seems to be none: a DualShock 4 over Bluetooth has it only once
+    // SDL has turned on its full reports.
+    if (!d.has_led && time - d.led_asked >= 2.0) {
+        const SDL_PropertiesID props = SDL_GetGamepadProperties(gamepad);
+        d.has_led = SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RGB_LED_BOOLEAN, false);
+        d.led_asked = time;
+    }
+    if (!d.has_led) return;
+    const ffb::LedColor c = s ? ffb::shift_light_led(*s, player, time) : ffb::player_led(player);
+    if (d.led_sent && c == d.led) return;
+    if (SDL_SetGamepadLED(gamepad, c.r, c.g, c.b)) d.led = c, d.led_sent = true;
+    else d.has_led = false, d.led_sent = false, d.led_asked = time; // tried again in 2 s, not every frame
 }
 
 void ForceFeedback::forget(SDL_JoystickID id) {

@@ -685,6 +685,14 @@ void RaceScreen::update_drive(App& app, double dt) {
                 f.triggers_on = rumble2_on_, f.wheel_on = wheel_force2_on_;
                 app.input().set_force_feedback(1, f);
             }
+        // The light bar's shift light: not feedback, so whatever the Vibration option; not the title
+        // screen's attract run, which the computer drives.
+        auto revs = [](const sim::VehicleState& s, const sim::VehicleSetup& su) {
+            return ShiftLightState{s.engine_rpm, su.shift_light_rpm(), s.rev_limiter};
+        };
+        if (!finished_ && !attract_) app.input().set_shift_light(0, revs(vehicle_->state(), vehicle_->setup()));
+        if (field_ && field_->has_second() && !finished2_ && !attract_)
+            app.input().set_shift_light(1, revs(field_->second_state(), field_->second_setup()));
     }
     ffb_wall_ = ffb_car_ = ffb_wall2_ = ffb_car2_ = 0;
 }

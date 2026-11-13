@@ -2151,6 +2151,15 @@ private:
         if (c.gt3_wheel()) rows_[base + 7].enabled = false;
         info("Device (player 1)", app.input().device_name(0),
              "Effects are felt while driving.");
+        heading("Light bar");
+        toggle("Shift light",
+               "DualSense and DualShock 4: the light bar shows the revs while driving, green, yellow and red, "
+               "flashing red when it's time to shift. Player 1 blue and player 2 pink otherwise.",
+               c.lightbar, [apply, c](bool v) {
+                   ForceFeedbackConfig n = c;
+                   n.lightbar = v;
+                   apply(n);
+               });
     }
 
     void build_touch(App& app) {

@@ -926,12 +926,22 @@ void InputManager::update(double dt) {
             else ffb_.stop(d->id);
         }
         p.ffb_age += dt;
+        if (const Device* d = find_device(p.device)) {
+            const ShiftLightState* revs = p.shift_light_age < 0.25 ? &p.shift_light : nullptr;
+            ffb_.light(d->id, d->gamepad, int(&p - players_.data()), revs, time_);
+        }
+        p.shift_light_age += dt;
     }
 }
 
 void InputManager::set_force_feedback(int player, const ForceFeedbackState& state) {
     players_[player].ffb = state;
     players_[player].ffb_age = 0;
+}
+
+void InputManager::set_shift_light(int player, const ShiftLightState& state) {
+    players_[player].shift_light = state;
+    players_[player].shift_light_age = 0;
 }
 
 int InputManager::pedal_trigger(const Player& p, PadButton pedal) const {
