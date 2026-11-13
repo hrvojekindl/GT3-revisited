@@ -5,6 +5,7 @@
 #include "audio/audio_engine.h"
 #include "base/config.h"
 #include "disc/disc.h"
+#include "game/play_time.h"
 #include "game/save_folder.h"
 #include "input/input_manager.h"
 #include "platform/aspect.h"
@@ -71,6 +72,15 @@ public:
     // The Discord status while this screen is on top (app/presence.h): fills `t` and returns
     // true, or returns false to let the screen below say.
     virtual bool presence(App&, PresenceText&) { return false; }
+    // A race being driven here (not finished, not a replay or a demonstration): when the day's play
+    // time runs out (game/play_time.h), it can be finished first, for up to PlayTime::kRaceGraceSeconds.
+    enum class Race : u8 { None, Offline, Online };
+    virtual Race race_running() const { return Race::None; }
+    // A screen opens over this one (the time-up screen): a race goes quiet, and an offline one pauses
+    // (an online one can't: the others race on without this player).
+    virtual void covered(App&) {}
+    // The time-up screen (app/screen_time_up.cpp).
+    virtual bool time_up() const { return false; }
 };
 
 class App {
@@ -241,6 +251,12 @@ public:
     // The languages the disc runs in (disc/region.h playable_languages): NTSC-U US, NTSC-J
     // JP, PAL BR, FR, GR, IT, SP.
     std::vector<std::string> languages() const;
+    // The daily play-time limit (game/play_time.h): the limit in the config, the day's count in
+    // playtime.ini. When today's time is up and no race is being driven, the time-up screen opens.
+    const game::PlayTime& play_time() const { return play_time_; }
+    static std::string today(); // the local date, YYYY-MM-DD
+    void set_play_limit(int minutes); // 0: none; not while locked
+    void lock_play_limit();           // Settings can't change it any more (only config.ini can)
 
 private:
     void apply_screen_changes();
@@ -341,6 +357,16 @@ private:
     // Draws over the whole frame in UI units (Ui::kHeight tall at `zoom` 1, the window's width),
     // whatever the screen's layout: `draw` gets the frame's size in them.
     void draw_over(const std::function<void(float width, float height)>& draw, float zoom = 1.0f);
+    game::PlayTime play_time_;
+    std::string play_time_path_;   // the day's count (playtime.ini), apart from config.ini: it is saved often
+    double play_time_unsaved_ = 0; // seconds counted since it was last saved
+    double time_up_wait_ = 0;      // seconds the time-up screen has been due (it opens after a moment)
+    void save_play_time();
+    void update_play_time(double dt);
+    Screen::Race race_running() const; // the screens' (Screen::race_running): Online over Offline over None
+    bool race_may_finish(const std::string& day) const; // a running race keeps the time-up screen away
+    bool time_up_open() const;
+    void draw_play_time_notice(); // the last minutes, and "finish this race" once time is up
     bool touch_ui_ = false;  // phone/tablet sizing (mobile builds, or GT3R_PHONE)
     bool phone_sim_ = false; // GT3R_PHONE=1: desktop window shaped like a 20:9 phone
     std::optional<platform::DisplayInsets> display_insets_; // phones: cutout and corner radius (pixels)
@@ -359,6 +385,10 @@ std::unique_ptr<Screen> make_mods_screen();
 std::unique_ptr<Screen> make_settings_screen(int tab = 0, bool to_game = false);
 constexpr int kSettingsTabControls = 2;
 constexpr int kSettingsTabDisc = 6;
+constexpr int kSettingsTabPlayTime = 8;
+// Today's play time is up (App::play_time): quit, or change the limit in Settings unless it is
+// locked. Closes itself once there is time again (a higher limit, the next day).
+std::unique_ptr<Screen> make_time_up_screen();
 // Settings -> Touch -> Customize layout: move, resize and hide the on-screen controls. `to_game`:
 // Settings was opened from the game's menus (make_settings_screen's to_game); Triangle then closes
 // this and Settings at once, back to the game (the screen pops itself, then calls it).

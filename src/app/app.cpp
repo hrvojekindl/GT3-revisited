@@ -101,6 +101,8 @@ bool App::init(int argc, char** argv) {
     SDL_CreateDirectory(mods_dir().c_str());
     config_path_ = data_dir_ + "config.ini";
     if (auto cfg = IniDocument::load(config_path_)) config_ = std::move(*cfg);
+    play_time_path_ = data_dir_ + "playtime.ini";
+    play_time_ = game::PlayTime::load(config_, IniDocument::load(play_time_path_).value_or(IniDocument{}));
     // iOS: the remembered disc images, music folder and save folder readable again (another
     // install's folder, picked ones).
     bool restored = platform::restore_disc_access(config_, data_dir_);
@@ -663,6 +665,86 @@ void App::draw_over(const std::function<void(float width, float height)>& draw, 
     SDL_SetRenderLogicalPresentation(renderer_, lw, lh, mode);
 }
 
+std::string App::today() { return game::local_date(std::time(nullptr)); }
+
+void App::set_play_limit(int minutes) {
+    if (play_time_.locked) return;
+    play_time_.daily_minutes = std::clamp(minutes, 0, game::PlayTime::kMaxMinutes);
+    save_config();
+}
+
+void App::lock_play_limit() {
+    play_time_.locked = true;
+    save_config();
+}
+
+Screen::Race App::race_running() const {
+    Screen::Race r = Screen::Race::None;
+    for (const auto& s : screens_) r = std::max(r, s->race_running());
+    return r;
+}
+
+bool App::race_may_finish(const std::string& day) const {
+    return race_running() != Screen::Race::None && play_time_.race_may_finish(day);
+}
+
+bool App::time_up_open() const {
+    auto up = [](const auto& s) { return s->time_up(); };
+    return std::any_of(screens_.begin(), screens_.end(), up) || std::any_of(pending_.begin(), pending_.end(), up);
+}
+
+void App::save_play_time() {
+    play_time_unsaved_ = 0;
+    if (play_time_path_.empty()) return;
+    IniDocument count;
+    play_time_.save_count(count);
+    if (!count.save(play_time_path_)) LOG_WARN("Could not save %s", play_time_path_.c_str());
+}
+
+void App::update_play_time(double dt) {
+    const std::string day = today();
+    const bool up = time_up_open();
+    // Played: the window in front, controllers driving it from behind another ([input] background), or
+    // a headset on.
+    const bool focused = window_ && (SDL_GetWindowFlags(window_) & SDL_WINDOW_INPUT_FOCUS);
+    bool playing = focused || (input_ && input_->background());
+#if GT3R_XR
+    playing = playing || xr_;
+#endif
+    if (playing && !up) {
+        play_time_.add(dt, day);
+        play_time_unsaved_ += dt;
+    }
+    if (play_time_unsaved_ >= 30 && play_time_.limited()) save_play_time(); // a crash or a forced quit loses little
+    if (up || !play_time_.over(day) || screens_.empty() || !disc_ || race_may_finish(day)) {
+        time_up_wait_ = 0;
+        return;
+    }
+    // A moment first: a race that just finished sends its result (online) and shows the finish.
+    if ((time_up_wait_ += dt) < 2.0) return;
+    time_up_wait_ = 0;
+    for (const auto& s : screens_) s->covered(*this);
+    push(make_time_up_screen());
+}
+
+void App::draw_play_time_notice() {
+    if (!play_time_.limited()) return;
+    const std::string day = today();
+    const double left = play_time_.left(day);
+    std::string text;
+    if (left <= 0 && race_may_finish(day)) text = "Time's up for today: finish this race";
+    else if (left > 0 && left <= game::PlayTime::kWarnSeconds)
+        text = std::to_string(int(std::ceil(left / 60))) + " min of play left today";
+    if (text.empty()) return;
+    draw_over([&](float width, float) {
+        const float w = std::ceil(Ui::text_width(text)) + 16, h = Ui::kChar + 8;
+        const float x = std::round((width - w) / 2), y = 80; // below the race's rear-view mirror
+        ui_->fill_round(x, y, w, h, 4, Color{0, 0, 0, 190});
+        ui_->frame_round(x, y, w, h, 4, 1, colors::kAccent);
+        ui_->text(x + 8, y + 4, text, colors::kAccent);
+    });
+}
+
 platform::Aspect App::aspect() const {
 #if GT3R_XR
     if (xr_) return platform::Aspect::Wide;
@@ -806,6 +888,7 @@ void App::set_dialog_result(std::string path) {
 void App::save_config() {
     input_->save(config_);
     touch_.save(config_);
+    play_time_.save_limit(config_);
     char vol[16];
     std::snprintf(vol, sizeof(vol), "%.2f", audio_ ? audio_->music_volume() : 0.8f);
     config_.set("audio", "music_volume", vol);
@@ -924,6 +1007,8 @@ SDL_AppResult App::iterate() {
     Uint64 h_u1 = SDL_GetTicksNS();
     apply_screen_changes();
     if (screens_.empty()) quit_ = true;
+    update_play_time(dt);
+    apply_screen_changes();
 
     // Phones: the display cutout and corner radius (retried until the
     // window has insets; refreshed when the safe area changes).
@@ -948,6 +1033,7 @@ SDL_AppResult App::iterate() {
     touch_.set_safe_area(safe_area_window());
     touch_.render(*ui_);
     draw_fps(shown && shown->adaptive_ui());
+    draw_play_time_notice();
     draw_key_help();
     if (phone_sim_) draw_phone_mask();
     if (pointer_shown_) { // a scripted pointer's arrow (screenshots)
@@ -1549,6 +1635,7 @@ void App::shutdown() {
     discord_status().shutdown(); // clears the Discord status
     remember_race_scale();
     if (input_) save_config();
+    save_play_time();
     screens_.clear();
     pending_.clear();
     close_disc();

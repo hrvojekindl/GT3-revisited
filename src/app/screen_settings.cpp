@@ -44,15 +44,15 @@ namespace gt3r {
 namespace {
 
 #if GT3R_XR
-enum Tab { kDisplay, kAudio, kControls, kCameras, kFfb, kTouch, kDisc, kOnline, kVr, kTabCount };
-const char* const kTabNames[kTabCount] = {"Display", "Audio",        "Controls", "Cameras", "Rumble & feedback",
-                                          "Touch",   "Disc & saves", "Online",   "VR"};
+enum Tab { kDisplay, kAudio, kControls, kCameras, kFfb, kTouch, kDisc, kOnline, kPlayTime, kVr, kTabCount };
+const char* const kTabNames[kTabCount] = {"Display", "Audio",        "Controls", "Cameras",   "Rumble & feedback",
+                                          "Touch",   "Disc & saves", "Online",   "Play time", "VR"};
 #else
-enum Tab { kDisplay, kAudio, kControls, kCameras, kFfb, kTouch, kDisc, kOnline, kTabCount };
-const char* const kTabNames[kTabCount] = {"Display", "Audio",        "Controls", "Cameras", "Rumble & feedback",
-                                          "Touch",   "Disc & saves", "Online"};
+enum Tab { kDisplay, kAudio, kControls, kCameras, kFfb, kTouch, kDisc, kOnline, kPlayTime, kTabCount };
+const char* const kTabNames[kTabCount] = {"Display", "Audio",        "Controls", "Cameras",   "Rumble & feedback",
+                                          "Touch",   "Disc & saves", "Online",   "Play time"};
 #endif
-static_assert(kControls == kSettingsTabControls && kDisc == kSettingsTabDisc);
+static_assert(kControls == kSettingsTabControls && kDisc == kSettingsTabDisc && kPlayTime == kSettingsTabPlayTime);
 
 struct Row {
     enum class Kind { Toggle, Choice, Slider, Action, Info, Heading, Preview, Binding };
@@ -96,7 +96,7 @@ bool disc_available(const std::string& path) {
 class SettingsScreen : public Screen {
 public:
     SettingsScreen(int tab, bool to_game) : tab_(std::clamp(tab, 0, kTabCount - 1)), to_game_(to_game) {
-        // Screenshots / testing: GT3R_SETTINGS_TAB=<0..7> opens that page; GT3R_CAMERA_EDITOR=new (or a
+        // Screenshots / testing: GT3R_SETTINGS_TAB=<n> (0: the first) opens that page; GT3R_CAMERA_EDITOR=new (or a
         // camera's id) opens the camera editor on the Cameras page.
         if (const char* t = SDL_getenv("GT3R_SETTINGS_TAB"); t && *t) tab_ = std::clamp(std::atoi(t), 0, kTabCount - 1);
         if (const char* c = SDL_getenv("GT3R_CAMERA_EDITOR"); c && *c) tab_ = kCameras, script_editor_ = c;
@@ -567,6 +567,7 @@ private:
         case kTouch: build_touch(app); break;
         case kDisc: build_disc(app); break;
         case kOnline: build_online(app); break;
+        case kPlayTime: build_play_time(app); break;
 #if GT3R_XR
         case kVr: build_vr(app); break;
 #endif
@@ -2161,6 +2162,33 @@ private:
                    n.lightbar = v;
                    apply(n);
                });
+    }
+
+    void build_play_time(App& app) {
+        App* a = &app;
+        const game::PlayTime& pt = app.play_time();
+        const std::string day = App::today();
+        heading("Daily limit");
+        info("Played today", game::play_time_text(pt.played_on(day)),
+             "Counted from midnight while the game's window is in front (or controllers drive it from "
+             "behind another: Controls > Controllers in the background).");
+        const float minutes = float(pt.daily_minutes);
+        slider("Daily play time",
+               "When today's time is up, a race being driven can be finished (up to 10 minutes more), then the game "
+               "says so until tomorrow. Five minutes before, a notice says how long is left.",
+               minutes, 0, float(game::PlayTime::kMaxMinutes), 15,
+               pt.limited() ? game::play_time_text(minutes * 60.0) : "No limit",
+               [a](float v) { a->set_play_limit(int(std::lround(v))); });
+        if (pt.locked) {
+            rows_.back().enabled = false;
+            info("Locked", "Yes",
+                 "Only config.ini can change the limit now: quit the game, then remove [playtime] locked = on.");
+        } else {
+            action("Lock the limit",
+                   "Keep the limit from being changed here, for a child's account. To undo it, quit the game and "
+                   "remove [playtime] locked = on from config.ini in the user data folder.",
+                   "", [a] { a->lock_play_limit(); });
+        }
     }
 
     void build_touch(App& app) {

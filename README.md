@@ -239,6 +239,8 @@ are only there:
 | `[player1]`, `[player2]` | `controller` (auto, a device name, or keyboard), `keyboard`, `race`, `rumble` (auto, modern, gt3); `phone_vibration` (player 1, Android) | see [INPUT](docs/INPUT.md#controller) |
 | `[player1.actions]`, `[player2.actions]` | `next_song`, `previous_song` | the song controls' chords ([INPUT](docs/INPUT.md#song-controls)) |
 | `[ffb]` | see [INPUT](docs/INPUT.md) | DualSense/Xbox triggers, wheel force feedback and the DualSense / DualShock 4 light bar's shift light (`lightbar`) |
+| `[playtime] daily_minutes` | `0`..`600` | a daily play-time limit (Settings → Play time; 0: none). When today's time is up, a race being driven may finish (up to 10 minutes more), then the game says so until tomorrow; five minutes before, a notice says how long is left. Counted while the game's window is in front (or controllers drive it from behind, `[input] background`), in `playtime.ini` beside this file |
+| `[playtime] locked` | `on` / `off` | on: Settings shows the limit but can't change it (Settings → Play time → Lock the limit; to unlock, quit the game and remove the line) |
 | `[touch]` | see [INPUT](docs/INPUT.md#touch-controls-phones-and-tablets) | on-screen controls on phones and tablets; Customize layout moves, resizes and hides each one |
 | `[online] server` | host name | relay server (default `gt3r.gameversions.com`; set in the lobby) |
 | `[online] update_check` | `on` / `off` | ask the relay server for a newer version at startup (Settings → Online) |

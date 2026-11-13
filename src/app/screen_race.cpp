@@ -194,6 +194,22 @@ TouchLayout RaceScreen::touch_layout() const {
                                                                                                      : TouchLayout::Menu;
 }
 
+// Until each player's car is past the finish (results, a replay, a demonstration, the title screen's
+// attract run and the quick menus aren't driven).
+Screen::Race RaceScreen::race_running() const {
+    if (stage_ != Stage::Drive || replaying_ || demo_ || attract_ || race_preview_ || quick_) return Race::None;
+    if (finished_ && !(field_ && field_->has_second() && !finished2_)) return Race::None;
+    return online_ ? Race::Online : Race::Offline;
+}
+
+// The time-up screen opens over the race (finished, or past the grace): its sounds stop, and a
+// race still being driven offline pauses as when the window loses the focus.
+void RaceScreen::covered(App& app) {
+    if (stage_ != Stage::Drive) return;
+    if (race_running() == Race::Offline && !paused_) open_pause(app);
+    else silence(app);
+}
+
 bool RaceScreen::touch_fades() const {
     // (Not the pause menu over a replay, nor the quick menus: they are used, not watched.)
     return touch_layout() == TouchLayout::Menu && stage_ == Stage::Drive && !paused_ && !quick_;
