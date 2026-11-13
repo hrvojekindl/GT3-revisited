@@ -376,25 +376,22 @@ GT3R_VIEWER="find=mod:my_car,clean=1,key=1,yaw=3.95,pitch=0.16,zoom=1.15" GT3R_V
 ### Electric cars
 
 GT3 has no electric cars, so `type = electric` switches on a few additions. Disc
-cars never use them.
-
-**For now an electric car races with its donor car's engine, gearbox and
-drivetrain** (the stock ones): the race runs GT3's own physics, which has no
-electric drive yet. The mods screen and the log say so, and the car still
-sounds like its motor. The drive described below returns when the race has it.
+cars never use them. The race runs GT3's own physics step, and an electric car
+takes a path of its own through its engine, clutch and gearbox steps
+(`ElectricDrive` in `src/sim/exact/car_record.h`, `tick_engine.cpp`); every other
+part of the step (tyres, suspension, aids, the AI) is GT3's.
 
 - **Drive:** the motor drives the wheels directly through a single reduction.
   There is no idle, no clutch slip and no gear changes, and full torque is
   available from standstill. The default curve holds constant torque up to the
   base speed, then constant power, easing to 85 % at `max_rpm`. `max_rpm` also
-  acts as the top-speed limiter.
+  acts as the top-speed limiter: the drive fades out over its last 2 %.
 - **AWD:** both axles get a fixed torque split (one motor per axle).
 - **One-pedal driving:** lifting off brakes the car with the motor instead of
   engine braking: `regen_g` (default 0.2 g) at town speeds, power-limited at
-  highway speeds like real cars. Near walking pace the friction brakes blend in,
-  and the car stops and holds while neither pedal is pressed. A partly pressed
-  accelerator blends between regen and drive, so there is a coast point at
-  roughly 15-20 % pedal.
+  highway speeds like real cars. The regen fades in over the accelerator's first
+  10 %. Below 5 km/h the friction brakes take over from it, and the car stops and
+  holds while the accelerator is up.
 - **Sound:** a motor whine and an inverter sound are synthesised as engine sound
   banks (`src/audio/motor_sound.*`). They play through the normal engine sound
   path: pitch follows the motor, the inverter sound swells under load, and
@@ -411,8 +408,7 @@ resulting specs and test-drives the car on the game's own physics, on the
 machine tests' course: 0-60 mph (standing start and with a 1 ft rollout, like
 US magazine tests), 0-100 km/h, the quarter mile, top speed (GT3's top-speed
 test, driven by the race's AI), 60-0 mph braking and lift-off deceleration,
-each next to your `[reference]` figures. An electric car is driven on its
-donor's engine (above). `disc:<label>` arguments run disc cars through the same
+each next to your `[reference]` figures. `disc:<label>` arguments run disc cars through the same
 test for comparison. Fit `power_kw` to the quarter-mile trap
 speed (top end) first, then `output_pct` to 0-60. GT3's physics loses a little
 at speed (the disc Viper

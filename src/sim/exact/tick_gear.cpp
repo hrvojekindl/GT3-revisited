@@ -181,7 +181,7 @@ int gear_decision(Car& c, const GearSettings& s) {
 void gear_step(Car& c, const GearSettings& s) {
     const int g = gear_decision(c, s);
     if (g == -1) return;
-    if (c.clutch != 0) c.clutch = g == 0 || c.gear == 0 ? 2 : 3;
+    if (c.clutch != 0 && !c.ev.on) c.clutch = g == 0 || c.gear == 0 ? 2 : 3; // (an electric car's stays locked)
     set_gear(c, u8(g));
 }
 

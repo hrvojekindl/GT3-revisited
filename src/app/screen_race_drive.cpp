@@ -686,9 +686,9 @@ void RaceScreen::update_drive(App& app, double dt) {
                 app.input().set_force_feedback(1, f);
             }
         // The light bar's shift light: not feedback, so whatever the Vibration option; not the title
-        // screen's attract run, which the computer drives.
+        // screen's attract run, which the computer drives. A single-speed car (an electric one) never shifts: no light.
         auto revs = [](const sim::VehicleState& s, const sim::VehicleSetup& su) {
-            return ShiftLightState{s.engine_rpm, su.shift_light_rpm(), s.rev_limiter};
+            return ShiftLightState{s.engine_rpm, su.forward_gears > 1 ? su.shift_light_rpm() : 0.0f, s.rev_limiter};
         };
         if (!finished_ && !attract_) app.input().set_shift_light(0, revs(vehicle_->state(), vehicle_->setup()));
         if (field_ && field_->has_second() && !finished2_ && !attract_)

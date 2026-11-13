@@ -16,6 +16,7 @@
 #include "game/data/mod_cars.h"
 #include "exact_drive.h"
 #include "race/exact_setup.h"
+#include "sim/exact/start.h"
 #include "sim/car_spec.h"
 #include "vfs/vfs.h"
 
@@ -322,22 +323,87 @@ TEST(modcar_disc_end_to_end) {
     CHECK(!db.parts_for(data::TableId::FrontTire, "test_ev").empty());
     CHECK(db.parts_for(data::TableId::TurbineKit, "test_ev").empty());
     CHECK(db.mod_car("test_ev") && db.mod_car("test_ev")->fit.active());
-    // The game's physics has no EV drive yet: an electric mod car races on its donor's engine, engine parts, driveline and
-    // gearbox (and their settings), on its own body and tyres.
+    // An electric mod car races on its own motor, drivetrain and reduction, with the electric drive; its equipment with
+    // its donor's engine in it (a race recorded before the drive existed) races on that engine.
     using T = data::TableId;
     std::optional<sim::exact::Equipment> ev = race::exact_equipment(db, {"test_ev"});
     std::optional<sim::exact::Equipment> donor = race::exact_equipment(db, {"legacy_gtb_96"});
     CHECK(ev && donor);
     if (ev && donor) {
-        for (T t : {T::Engine, T::Drivetrain, T::Gear}) CHECK(ev->part[size_t(t)] == donor->part[size_t(t)]);
-        CHECK(ev->word(0x110) == donor->word(0x110) && ev->word(0xF4) == donor->word(0xF4)); // final drive, first gear
-        CHECK(ev->part[size_t(T::FrontTire)] != donor->part[size_t(T::FrontTire)]);
+        for (T t : {T::Engine, T::Drivetrain, T::Gear}) CHECK(ev->part[size_t(t)] != donor->part[size_t(t)]);
+        const sim::exact::ElectricDrive d = sim::exact::electric_drive(&db, *ev);
+        CHECK(d.on && d.regen_torque.host() > 0 && d.regen_power.host() > 0);
+        sim::exact::Equipment old = *ev;
+        old.part[size_t(T::Engine)] = donor->part[size_t(T::Engine)];
+        CHECK(!sim::exact::electric_drive(&db, old).on);
+        CHECK(!sim::exact::electric_drive(&db, *donor).on);
     }
     const std::vector<float> v = straight_kmh(*disc, db, "test_ev", {6.0});
-    CHECK(v.size() == 1 && v[0] > 60); // (it drives, on the donor's engine)
+    CHECK(v.size() == 1 && v[0] > 60);
     // A second definition with a disc car's label is refused.
     def->label = "legacy_gtb_96";
     CHECK(!data::add_mod_car(db, *def, &err));
+}
+
+TEST(modcar_regen_not_negative) {
+    std::string err;
+    std::string bad = std::string(kMinimal) + "\n[powertrain]\nregen_g = -0.2\n";
+    CHECK(!data::parse_mod_car(bad, &err) && err.find("regen") != std::string::npos);
+}
+
+// The electric drive on the race's physics: no idle, the motor locked to the wheels in its one gear from standstill,
+// lift-off regen, the one-pedal stop and hold, the top speed held at the motor's limit.
+TEST(modcar_electric_drive) {
+    Disc* disc = test_disc();
+    if (!disc) SKIP("GT3R_DISC not set");
+    data::CarDatabase db;
+    CHECK(db.load(disc->volume()));
+    std::string err;
+    auto def = data::parse_mod_car(kMinimal, &err);
+    CHECK(def.has_value());
+    if (!def) return;
+    def->max_rpm = 9000; // 136 km/h through 9.04 on the 275/35R21 rears (r 0.363 m): within the car's power
+    CHECK(data::add_mod_car(db, *def, &err));
+    db.rebuild();
+    StraightRun run = straight_run(*disc, db, "test_ev");
+    CHECK(run.field != nullptr);
+    if (!run.field) return;
+    sim::ControlInputs in;
+    in.controller_kind = 2;
+    const sim::VehicleState& s = run.field->player().state();
+    auto drive = [&](double seconds) {
+        const double end = run.field->race_time() + seconds;
+        bool one_gear = true;
+        while (run.field->race_time() < end) {
+            run.step(in);
+            one_gear = one_gear && s.gear == 1;
+        }
+        return one_gear;
+    };
+    while (run.field->race_time() < 0) run.step(in); // the countdown
+    drive(1.0);
+    CHECK(s.speed_kmh < 0.5f && s.engine_rpm < 1); // at rest: no idle
+    in.throttle = 1;
+    CHECK(drive(0.25) && s.speed_kmh > 5); // full torque from standstill, no clutch to slip
+    CHECK(drive(1.5));
+    // Lift-off at town speeds: the motor brakes at about the default 0.2 g (once the pedal is up).
+    in.throttle = 0;
+    drive(0.5);
+    const float v0 = s.speed_kmh;
+    drive(1.0);
+    const float g = (v0 - s.speed_kmh) / 3.6f / 9.81f;
+    std::printf("    lift-off from %.1f km/h: %.2f g\n", double(v0), double(g));
+    CHECK(v0 > 40 && v0 < 90 && g > 0.17f && g < 0.3f);
+    // Stopped by regen and the brakes taking over, it stays stopped with neither pedal pressed.
+    drive(20.0);
+    CHECK(s.speed_kmh < 0.5f);
+    drive(3.0);
+    CHECK(s.speed_kmh < 0.5f);
+    // Top speed: the motor's limit; the drive fades out over its last 2 %.
+    in.throttle = 1;
+    CHECK(drive(30.0));
+    std::printf("    top speed %.1f km/h at %.0f rpm\n", double(s.speed_kmh), double(s.engine_rpm));
+    CHECK(s.engine_rpm <= 9000 && s.engine_rpm > 8800 && s.speed_kmh > 130);
 }
 
 // --- custom bodies: JSON, PNG and binary glTF -------------------------------------

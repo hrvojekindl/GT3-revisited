@@ -209,13 +209,15 @@ void lap_start(std::span<Car> cars, int i, s32 sub, F frac, const RaceFlowInputs
 }
 // The ghost's playback's lap start (of its +0xC4), none while it is empty (+0x140).
 const Snapshot* ghost_start(const RaceFlowInputs& in) { return in.recorder.ghost ? in.recorder.ghost_start : nullptr; }
-// Car c restored from a snapshot, but its ghost flag, index and control source; its last crossing's time from the
-// snapshot's remainder and the race clock. (Its collision body, reset and restored from the snapshot's copy, is the caller's.)
+// Car c restored from a snapshot, but its ghost flag, index and control source (and its electric drive, which no record
+// holds); its last crossing's time from the snapshot's remainder and the race clock. (Its collision body, reset and restored
+// from the snapshot's copy, is the caller's.)
 void restore(Car& c, const Snapshot& s, u32 clock) {
     const u8 ghost = c.ghost, index = c.index;
     const s8 control = c.control;
+    const ElectricDrive ev = c.ev;
     c = s.car;
-    c.ghost = ghost, c.index = index, c.control = control;
+    c.ghost = ghost, c.index = index, c.control = control, c.ev = ev;
     c.x530 = (clock + s.sub) / 3;
 }
 // The free run's ghost car (car 1) put back on its recording's lap start with `laps` laps and its playback

@@ -540,7 +540,8 @@ Effects stop by themselves ~0.25 s after the last update (pause, menus).
 follows the revs. Below 60 % of the HUD's shift point it keeps the player's colour (player 1 blue, player 2
 pink: a PlayStation's second pad is red, which the light flashes); from there it goes green, yellow and red
 in 12 steps, and flashes red at 8 Hz from the shift point and on the rev limiter. The colour is sent only
-when it changes. Pads without an RGB light bar are left alone.
+when it changes. Pads without an RGB light bar are left alone. A single-speed car (an electric mod car)
+never shifts: its light bar keeps the player's colour, and the HUD shows no shift lamp or red band.
 The brake and throttle triggers are found from the race bindings: whichever of
 `pad.lefttrigger` / `pad.righttrigger` drives Square (brake) and Cross (accelerate).
 

@@ -1174,8 +1174,9 @@ theater's demonstrations, the licence preview) follow NTSC-U's on every disc
   event's cars fit its course; the arcade's dirt races are one against one). The start port itself reads a
   slot past the course's grid table as the program does (CourseQuery::slot: what follows the table in the
   road block, the loader's pointer words with the block's address, RaceSetup::road_addr). An electric mod
-  car races with its donor's stock engine, engine parts, drivetrain and gearbox (`exact_equipment`; the log
-  and the mods screen say so) until the exact core has the EV drive. The test autopilot (`GT3R_RACE auto=1`)
+  car races on its own motor with the electric drive (`sim::exact::electric_drive`, Car::ev; the log says
+  so); a replay recorded while electric cars raced on their donor's engine has that engine in its equipment
+  and plays on it. The test autopilot (`GT3R_RACE auto=1`)
   sets the configuration byte 3: the race's own AI drives the players' cars with their pads decoded.
 - **Inputs**: the race pad (the player's race layout in GT3's type A meanings) through the pad read
   (`sim::exact::pad_read`, the live path: the analog pad with pressure buttons, pad type 8; the
