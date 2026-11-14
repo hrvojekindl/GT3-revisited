@@ -16,6 +16,7 @@
 #include "game/data/mod_cars.h"
 #include "exact_drive.h"
 #include "race/exact_setup.h"
+#include "race/results.h"
 #include "sim/exact/start.h"
 #include "sim/car_spec.h"
 #include "vfs/vfs.h"
@@ -235,6 +236,9 @@ TEST(modcar_texts_game_text) {
     if (!c || !m) return;
     CHECK(c->name == "Caf\x81\xE9 \x80\x92 Racer"); // é Latin-1, ’ the Latin font's (Windows-1252) code
     CHECK(c->latin_name == c->name);
+    // One name: a blank second name, so the results and records show it once.
+    CHECK(c->name_alt.find_first_not_of(' ') == std::string::npos);
+    CHECK(race::result_car_name(*db, "syn_mod", true) == c->latin_name);
     CHECK(c->maker == disc_maker && c->maker_id == 77); // the disc's maker found
     CHECK(m->description == "Tr\x81\xE8s vite");
     CHECK(m->paints.size() == 1 && m->paints[0].first == "Bleu \x81\xC9lectrique");
