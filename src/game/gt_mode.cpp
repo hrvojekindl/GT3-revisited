@@ -816,7 +816,11 @@ int GtMode::add_prize_car_paint(const std::string& car, int paint, const std::st
 
 Check GtMode::can_sell(int index) const {
     if (index < 0 || index >= int(state_.garage.size())) return Check::Unknown;
-    if (car_flags(state_.garage[size_t(index)].car) & 2) return Check::NotForSell;
+    const std::string& car = state_.garage[size_t(index)].car;
+    // A car this database lacks (a mod car whose mod is off or removed) has no price here: it
+    // would go for nothing. It stays in the garage, whole, for when its mod is back.
+    if (!db().car(car)) return Check::NotForSell;
+    if (car_flags(car) & 2) return Check::NotForSell;
     return Check::Ok;
 }
 

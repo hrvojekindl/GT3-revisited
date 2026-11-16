@@ -254,6 +254,30 @@ void write_ranking(Bytes& p, size_t r, const std::vector<RankEntry>* rank, bool 
     }
 }
 
+// What the PS2 can hold of a game: only its disc's cars. A mod car (docs/MODDING.md) is not
+// one, nor are the parts cloned for it, and a car this disc lacks is not either: those are
+// left out of the garage and of the records that name their car (the course time trials' and
+// the machine tests', write_ranking). A ride car left out hands the ride to the first car
+// left. The game's own save keeps them all.
+GameState ps2_state(const GameState& s, const data::CarDatabase& db) {
+    auto on_ps2 = [&db](const std::string& car) { return db.car(car) && !db.mod_car(car); };
+    GameState o = s;
+    o.garage.clear();
+    o.ride = -1;
+    for (size_t i = 0; i < s.garage.size(); ++i) {
+        if (!on_ps2(s.garage[i].car)) continue;
+        if (int(i) == s.ride) o.ride = int(o.garage.size());
+        o.garage.push_back(s.garage[i]);
+    }
+    if (s.ride >= 0 && o.ride < 0 && !o.garage.empty()) o.ride = 0;
+    for (auto& [key, rank] : o.rankings)
+        if (key.rfind("ct:", 0) == 0 || key.rfind("mt:", 0) == 0)
+            rank.erase(std::remove_if(rank.begin(), rank.end(),
+                                      [&](const RankEntry& e) { return !e.car.empty() && !on_ps2(e.car); }),
+                       rank.end());
+    return o;
+}
+
 // The machine tests' tables follow the 44 course ones: 0-400 m, 0-1000 m, top speed.
 const char* const kMachineTests[3] = {"M400", "M1000", "MMAX"};
 
@@ -900,8 +924,9 @@ GameState import_ps2_save(ByteSpan file, const GtData& data) {
     return s;
 }
 
-Bytes export_ps2_save(const GameState& s, const GtData& data) {
+Bytes export_ps2_save(const GameState& game, const GtData& data) {
     const data::CarDatabase& db = data.db;
+    const GameState s = ps2_state(game, db);
     size_t nwheels = s.wheels.size() + 1; // + the stock-wheel placeholder
     size_t psize = kBlock + s.garage.size() * kCarRec + nwheels * kWheelRec + kLicenses + kRaceBest + kCourseBest +
                    kArcade + kAt + kTimeTrial + kMachine + kPrizeFlags + kChamp + kOptions;
@@ -1064,7 +1089,8 @@ void set_ps2_replay_pad(Bytes& o, const Ps2ReplayPad& p) {
     wrf(o, 0x118, p.music_cuts);
 }
 
-Bytes ps2_thumbnail(const GameState& s, std::shared_ptr<const GtData> data) {
+Bytes ps2_thumbnail(const GameState& game, std::shared_ptr<const GtData> data) {
+    const GameState s = ps2_state(game, data->db);
     GtMode view(std::move(data));
     view.state() = s;
     Bytes t(0x60, 0);

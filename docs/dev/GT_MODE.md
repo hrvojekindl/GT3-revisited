@@ -848,7 +848,11 @@ the idle championship and, unless the state came from a PS2 save, the options
 (`default_ps2_options`: all sound on, the race songs of `bgm/ads.inf` in the music
 list, shuffled as a new game's race playlist, the button tables). An
 imported save keeps its 0x888-byte options block (`GameState::ps2_options`,
-native `ps2opt` line) so an export restores the player's options. Our own options,
+native `ps2opt` line) so an export restores the player's options. The export holds
+only the disc's cars (`ps2_state`): a mod car, or a car this disc lacks, is left out of
+the garage and of the `ct:` / `mt:` rankings, which name their car (the PS2 has no record
+for it nor for the parts cloned for it), and a ride car left out hands the ride to the
+first car left. Our own options,
 the race playlist (the block's music list, `race::RacePlaylist`) included, live in
 config.ini `[options]` and are not read from or written into that block.
 

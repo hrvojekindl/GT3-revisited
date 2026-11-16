@@ -1000,6 +1000,93 @@ TEST(gtmode_disc_ps2_save_roundtrip) {
     CHECK(threw);
 }
 
+namespace {
+
+// The disc's data with one electric mod car added (test_ev, over the R390 Road Car), as the
+// game loads a mod's cars/*.ini.
+std::shared_ptr<const GtData> data_with_mod_car() {
+    Disc* disc = test::test_disc();
+    if (!disc) return nullptr;
+    const std::filesystem::path ini = test::temp_dir("gtmode_mod_car") / "test_ev.ini";
+    const std::string def = "[car]\nlabel = test_ev\nname = Test EV\nmaker = NISSAN\ndonor = r390_road_98\n"
+                            "price = 50000\n[powertrain]\ntype = electric\npower_kw = 300\ntorque_nm = 600\n"
+                            "max_rpm = 16000\n[drivetrain]\ndrive = AWD\ngears = 9.04\n[dealer]\nfor_sale = yes\n";
+    if (!write_host_file(ini.string(), ByteSpan(reinterpret_cast<const u8*>(def.data()), def.size()))) return nullptr;
+    const Volume& vol = disc->volume();
+    const std::string list = "test\t" + ini.string() + "\n";
+    auto d = std::make_shared<GtData>();
+    const bool ok = d->load([&](const std::string& p) -> std::optional<Bytes> {
+        if (p == Vfs::kModCarsList) return Bytes(list.begin(), list.end());
+        if (p == Vfs::kProgramFile) return vol.read_program();
+        const Volume::Entry* e = vol.find(p);
+        if (!e) return std::nullopt;
+        return vol.read(*e);
+    });
+    return ok && d->db.mod_car("test_ev") ? d : nullptr;
+}
+
+// A game owning the R34 and the mod car (the ride car, at the head of the list), with a
+// machine-test record set in each.
+GameState game_with_mod_car(const std::shared_ptr<const GtData>& with_mod) {
+    GtMode gt(with_mod);
+    gt.state().credits = 5000000;
+    CHECK(gt.buy_car("r34_gtr_v_99") == 0);
+    CHECK(gt.buy_car("test_ev") == 0); // to the head of the list: the R34 is now car 1
+    CHECK(gt.state().garage.size() == 2 && gt.state().garage[0].car == "test_ev");
+    gt.state().ride = 0;
+    RankEntry ev, r34;
+    ev.value = 300, ev.car = "test_ev", ev.name = "A";
+    r34.value = 290, r34.car = "r34_gtr_v_99", r34.name = "B";
+    gt.state().rankings["mt:MMAX"] = {ev, r34};
+    return gt.state();
+}
+
+} // namespace
+
+// A garage holding a mod car: the PS2 has no such car, nor its cloned parts, so the export
+// leaves the car out (and the records set in it), keeps the rest, and moves the ride car to a
+// car the PS2 has. The game's own save keeps the mod car.
+TEST(gtmode_disc_ps2_export_leaves_mod_cars_out) {
+    NEED_DATA();
+    const std::shared_ptr<const GtData> with_mod = data_with_mod_car();
+    CHECK(with_mod != nullptr);
+    if (!with_mod) return;
+    const GameState game = game_with_mod_car(with_mod);
+    for (const std::shared_ptr<const GtData>& d : {with_mod, data}) {
+        // In the game (the mod loaded) and in gt3tool save-export (the disc alone: the car unknown).
+        Bytes file = export_ps2_save(game, *d);
+        CHECK(rd32(file, 4) == 0x112BC + 0x204 * 1 + 0x44 * (game.wheels.size() + 1));
+        GameState s = import_ps2_save(file, *data);
+        CHECK(s.garage.size() == 1 && s.garage[0].car == "r34_gtr_v_99" && s.garage[0].parts == game.garage[1].parts);
+        CHECK(s.ride == 0); // the R34: a car the PS2 has
+        CHECK(s.credits == game.credits);
+        const std::vector<RankEntry>& top = s.rankings["mt:MMAX"];
+        CHECK(top.size() == 1 && top[0].car == "r34_gtr_v_99");
+        CHECK(rd32(ps2_thumbnail(game, d), 0x10) == 1); // the save list's car count
+    }
+}
+
+// A mod car in the garage while its mod is off or removed: it cannot be sold (without its mod
+// it has no price, so it would go for nothing), and the save keeps it whole, so it is back as
+// it was with the mod.
+TEST(gtmode_disc_mod_car_without_its_mod) {
+    NEED_DATA();
+    const std::shared_ptr<const GtData> with_mod = data_with_mod_car();
+    CHECK(with_mod != nullptr);
+    if (!with_mod) return;
+    GtMode off(data);
+    off.state() = game_with_mod_car(with_mod);
+    CHECK(off.can_sell(0) == Check::NotForSell);
+    CHECK(off.sell_car(0) == 0 && off.state().garage.size() == 2 && off.state().ride == 0);
+    CHECK(off.can_sell(1) == Check::Ok); // the R34 still sells
+    const GameState saved = load_from_text(save_to_text(off.state()));
+    CHECK(saved.garage.size() == 2 && saved.garage[0].car == "test_ev");
+    CHECK(saved.garage[0].parts == off.state().garage[0].parts && saved.garage[0].owned == off.state().garage[0].owned);
+    GtMode back(with_mod);
+    back.state() = saved;
+    CHECK(back.can_sell(0) == Check::Ok && back.sell_car(0) == 50000 / 4);
+}
+
 // Verified against a new game saved by the original (PCSX2): exporting the imported
 // save reproduces the original file byte for byte; this checks the parts we write
 // for a game that never came from the PS2 (built-in time-trial records, empty

@@ -308,7 +308,8 @@ this save, the data file alone (`.raw`) or a folder
 `<out>/BASCUS-97102GAMEDATA/` (or the PAL / NTSC-J name). To move a save onto a PCSX2 card you already
 use, import the `.psu` with a memory-card manager. Compressed `.max` / `.cbs`
 saves (Action Replay, CodeBreaker) are not read; convert them to `.psu`
-first.
+first. The PS2 has only its disc's cars, so an export leaves mod cars out of the
+garage and the records (your own save keeps them).
 
 Carried over: credits, days, races / wins, prize money, the garage (parts,
 settings, paint, wheel, odometer, oil, dirt), the wheel inventory, license

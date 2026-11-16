@@ -235,7 +235,10 @@ reduction, brakes, LSD and, for engine cars, the engine parts. The clones get th
 new car's labels, and the values from the file are written over them. The new
 records go into the ordinary tables, so the car works wherever the engine
 looks up a car by label: the physics, the race and the database screen. A mod
-car bought in GT Mode finds its cloned upgrade parts in the tune shop.
+car bought in GT Mode finds its cloned upgrade parts in the tune shop. With its
+mod off or removed, it stays in the garage under its label: it can't be sold or
+raced, and it is back as it was when the mod is. Exports to the PS2 leave mod
+cars out.
 
 ```ini
 [car]
