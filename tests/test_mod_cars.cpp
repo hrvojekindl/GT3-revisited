@@ -397,9 +397,17 @@ TEST(modcar_electric_drive) {
     in.throttle = 1;
     CHECK(drive(0.25) && s.speed_kmh > 5); // full torque from standstill, no clutch to slip
     CHECK(drive(1.5));
+    // The light bar's power meter: the motor's output against its full power (300 kW), and no braking.
+    const sim::VehicleSetup& su = run.field->player().setup();
+    const sim::VehicleTelemetry* tel = run.field->player().telemetry();
+    CHECK(std::fabs(su.motor_power - 300000) < 3000);
+    CHECK(tel && tel->motor_power > 0.3f * su.motor_power && tel->motor_power < 1.01f * su.motor_power);
+    CHECK(tel && tel->motor_braking == 0);
     // Lift-off at town speeds: the motor brakes at about the default 0.2 g (once the pedal is up).
     in.throttle = 0;
     drive(0.5);
+    tel = run.field->player().telemetry();
+    CHECK(tel && tel->motor_power < 0 && tel->motor_braking > 0.9f); // at its full braking: under its power limit
     const float v0 = s.speed_kmh;
     drive(1.0);
     const float g = (v0 - s.speed_kmh) / 3.6f / 9.81f;

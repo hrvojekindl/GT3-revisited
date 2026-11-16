@@ -215,9 +215,25 @@ float impulse_throttle(const ForceFeedbackState& s) { return s.triggers_on ? imp
 
 LedColor player_led(int player) { return player == 1 ? LedColor{48, 0, 40} : LedColor{0, 0, 64}; }
 
+LedColor motor_light_led(const ShiftLightState& s, int player) {
+    constexpr int kSteps = 12;
+    constexpr float kBright = 3.0f; // full power: the player's colour x (1 + kBright)
+    constexpr float kGreen = 160.0f; // full braking
+    auto step = [](float v) { return std::floor(std::clamp(v, 0.0f, 1.0f) * kSteps) / kSteps; };
+    const LedColor base = player_led(player);
+    if (s.motor_power < 0 && s.motor_braking > 0) {
+        const float g = step(s.motor_braking) * kGreen;
+        return {base.r, u8(std::min(255.0f, float(base.g) + g)), base.b};
+    }
+    const float k = 1.0f + step(s.motor_power) * kBright;
+    auto ch = [&](u8 c) { return u8(std::min(255.0f, std::round(float(c) * k))); };
+    return {ch(base.r), ch(base.g), ch(base.b)};
+}
+
 LedColor shift_light_led(const ShiftLightState& s, int player, double time) {
     constexpr float kFrom = 0.6f; // of the shift point, where the light starts
     constexpr int kSteps = 12;
+    if (s.motor) return motor_light_led(s, player);
     if (s.shift_rpm <= 0) return player_led(player);
     const float x = s.rpm / s.shift_rpm;
     if (x >= 1.0f || s.rev_limiter) return std::fmod(time * 8.0, 1.0) < 0.5 ? LedColor{255, 0, 0} : LedColor{};

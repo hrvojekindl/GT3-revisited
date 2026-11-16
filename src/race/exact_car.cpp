@@ -61,6 +61,11 @@ sim::VehicleSetup exact_setup(const ex::Car& c) {
     s.upshift_rpm = p.d.up_rpm ? float(p.d.up_rpm) : s.rev_limit_rpm - 200;
     s.has_turbo = h(p.e.boost_max) > 0;
     s.max_boost = h(p.e.boost_max);
+    if (c.ev.on) { // the curve's peak power (speed in rad/s x torque), under a power-restricted event's cap
+        for (int i = 0; i < int(p.e.torque.n) && i < int(p.e.torque.x.size()); ++i)
+            s.motor_power = std::max(s.motor_power, h(p.e.torque.x[size_t(i)]) * h(p.e.torque.y[size_t(i)]));
+        if (p.e.power_cap_on != 0 && h(p.e.power_cap) > 0) s.motor_power = std::min(s.motor_power, h(p.e.power_cap));
+    }
     for (size_t i = 0; i < 4; ++i) {
         const size_t a = i >> 1;
         sim::VehicleSetup::Wheel& w = s.wheels[i];
@@ -129,6 +134,7 @@ float traction_at(const ex::Car& c, size_t i) {
 void exact_telemetry(const ex::Car& c, bool wear_on, float wall, sim::VehicleTelemetry& t) {
     t = sim::VehicleTelemetry{};
     t.engine_torque = h(c.clutch_torque);
+    if (c.ev.on) t.motor_power = h(c.ev.power), t.motor_braking = h(c.ev.braking);
     t.clutch = c.clutch == 0 ? 0.0f : 1.0f;
     t.clutch_locked = c.clutch == 1;
     t.clutch_state = c.clutch;

@@ -35,7 +35,7 @@ generic HID joysticks, wheels and pedals. Devices hot-plug at any time.
 | Rumble | DS2 large motor → low-frequency motor, small motor → high-frequency motor. In races, each player's **Rumble** (Settings → Rumble & feedback, `[playerN] rumble`) picks how the motors run: **GT3 original** (`gt3`) follows GT3's own vibration: each step's level (suspension movement, curbs under the front wheels, the front tires' drive and brake forces, wall hits) on the large motor as GT3 sends it (at most half strength), never the small motor; most controllers play its low levels much stronger than a DualShock 2, so it runs all the time there. **Modern** (`modern`) rumbles for what the car meets on both motors, so it is felt in both grips, with a lean: the body stronger on the large motor (the left grip), the tires on the small one (the right grip), the other motor at 35%, or 70% on a DualSense, whose motors play in separate grips where a split feels like a side. A wall or car hit pulses for 0.25 s by its speed change and off-road holds, leaning left; wheelspin, a slide (the tire squeal) and locked wheels hold, and curbs pulse at a rate that follows the speed, leaning right. **Auto** (`auto`, the default) is Modern on every controller. Either way, a car the AI drives, as after the finish, does not vibrate |
 | Phone vibration (Android, off by default) | `[player1] phone_vibration = on` (Settings → Rumble & feedback → Phone vibration): player 1's rumble on the device's own motor, only while the controls driving them have no rumble motor (built-in handheld controls, touch, a controller without motors). A controller that rumbles keeps it; the phone stays still |
 | Impulse triggers (Xbox One/Series) | See Force feedback: the ABS on the brake's trigger, the edge of grip on the throttle's. On Windows only through SDL's RAWINPUT driver (see Xbox controllers) |
-| Player LEDs / light bars | Set to the player number. DualSense and DualShock 4 light bars: player 1 blue, player 2 pink, and a shift light while driving (see Force feedback, `lightbar`) |
+| Player LEDs / light bars | Set to the player number. DualSense and DualShock 4 light bars: player 1 blue, player 2 pink, and a shift light while driving, or an electric car's power meter (see Force feedback, `lightbar`) |
 | Button labels | The UI shows Cross/Circle on PlayStation pads and A/B on Xbox pads |
 | Motion sensors | `tilt` source: steer by rolling the controller (DualSense, DS4, Switch Pro, or a phone's own accelerometer on Android and iOS) |
 | Wheels and pedals | Raw joystick axes with `pedal` and `invert` options; the wheel layout |
@@ -541,7 +541,10 @@ follows the revs. Below 60 % of the HUD's shift point it keeps the player's colo
 pink: a PlayStation's second pad is red, which the light flashes); from there it goes green, yellow and red
 in 12 steps, and flashes red at 8 Hz from the shift point and on the rev limiter. The colour is sent only
 when it changes. Pads without an RGB light bar are left alone. A single-speed car (an electric mod car)
-never shifts: its light bar keeps the player's colour, and the HUD shows no shift lamp or red band.
+never shifts, and the HUD shows it no shift lamp or red band. Its light bar is a power meter in the
+player's colour instead: dim at no output, brightening in 12 steps to four times as bright at the motor's
+full power, and with green added, by how hard, while the motor brakes the car on lift-off. It never
+flashes, at the top speed either. (Checked in the unit tests, not yet on a pad.)
 The brake and throttle triggers are found from the race bindings: whichever of
 `pad.lefttrigger` / `pad.righttrigger` drives Square (brake) and Cross (accelerate).
 

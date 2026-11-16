@@ -326,6 +326,10 @@ struct ElectricDrive {
     bool on = false;
     F regen_torque; // the lift-off braking torque at the motor (N m)
     F regen_power;  // its power limit (W), which caps it at speed
+    // What the motor did on the last step, for the race's displays (the light bar, race::exact_telemetry); the step
+    // never reads them back.
+    F power;   // its output (W): + driving the car, - braking it
+    F braking; // its lift-off braking torque over regen_torque, 0..1
 };
 
 // The car record. Members by record offset; F = car + 0xF84.

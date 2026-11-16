@@ -259,6 +259,37 @@ TEST(ffb_shift_light) {
     CHECK(ffb::shift_light_led(s, 1, 0) == ffb::player_led(1));
 }
 
+TEST(ffb_motor_light) {
+    using ffb::LedColor;
+    ShiftLightState s;
+    s.motor = true, s.rpm = 18000, s.rev_limiter = true; // the revs and the limiter don't matter
+    // No output: each player's own colour, dim.
+    CHECK(ffb::shift_light_led(s, 0, 0) == ffb::player_led(0));
+    CHECK(ffb::shift_light_led(s, 1, 0) == ffb::player_led(1));
+    // Full power: the same colour, four times as bright; never a flash.
+    s.motor_power = 1;
+    const LedColor p1 = ffb::shift_light_led(s, 0, 0), p2 = ffb::shift_light_led(s, 1, 0);
+    CHECK(p1 == (LedColor{0, 0, 255}) && p2 == (LedColor{192, 0, 160}));
+    CHECK(ffb::shift_light_led(s, 0, 0.07) == p1 && ffb::shift_light_led(s, 0, 0.01) == p1);
+    // Half power: half way, in steps (close outputs show the same colour).
+    s.motor_power = 0.5f;
+    const LedColor half = ffb::shift_light_led(s, 0, 0);
+    CHECK(half == (LedColor{0, 0, 160}));
+    s.motor_power = 0.52f;
+    CHECK(ffb::shift_light_led(s, 0, 0) == half);
+    s.motor_power = 1.4f; // over the curve's peak (a rounding): full
+    CHECK(ffb::shift_light_led(s, 0, 0) == p1);
+    // Braking with the motor: green on the player's colour, by how hard; the two players still differ.
+    s.motor_power = -0.2f, s.motor_braking = 1;
+    const LedColor b1 = ffb::shift_light_led(s, 0, 0), b2 = ffb::shift_light_led(s, 1, 0);
+    CHECK(b1 == (LedColor{0, 160, 64}) && b2 == (LedColor{48, 160, 40}));
+    s.motor_braking = 0.25f;
+    CHECK(ffb::shift_light_led(s, 0, 0) == (LedColor{0, 40, 64}));
+    // Coasting with no braking (none asked, or at a standstill): the player's colour.
+    s.motor_power = 0, s.motor_braking = 0;
+    CHECK(ffb::shift_light_led(s, 0, 0) == ffb::player_led(0));
+}
+
 TEST(ffb_shift_light_without_devices) {
     InputManager input; // no devices: nothing to light, no crash
     ShiftLightState s;

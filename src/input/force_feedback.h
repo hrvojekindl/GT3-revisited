@@ -16,7 +16,7 @@
 //   trigger_force = 0.6 ; DualSense brake resistance (0..1)
 //   invert   = off     ; flip the wheel's steering force direction
 //   lightbar = on      ; DualSense / DualShock 4 light bar: the player's colour, a shift light while
-//                      ; driving (not under `enabled`: it is no force)
+//                      ; driving, an electric car's power meter (not under `enabled`: it is no force)
 
 #include "base/bytes.h"
 
@@ -50,6 +50,10 @@ struct ShiftLightState {
     float rpm = 0;           // engine speed
     float shift_rpm = 0;     // the HUD's shift point (HudData::shift_rpm); 0: no shift light
     bool rev_limiter = false; // on the fuel cut
+    // A single-speed electric car shows its motor instead (motor = true): its output over its full power (0..1; below
+    // 0 while it brakes the car) and its lift-off braking over its full braking (0..1).
+    bool motor = false;
+    float motor_power = 0, motor_braking = 0;
 };
 
 struct ForceFeedbackConfig {
@@ -113,8 +117,13 @@ struct LedColor {
 LedColor player_led(int player);
 // The light bar as a shift light: the player's colour up to 60 % of the shift point, then green, yellow and
 // red as the revs climb (in 12 steps, so the pad isn't sent a colour every frame), flashing red at 8 Hz
-// from the shift point and on the rev limiter. `time` in seconds.
+// from the shift point and on the rev limiter. `time` in seconds. With `motor` set, motor_light_led instead.
 LedColor shift_light_led(const ShiftLightState& s, int player, double time);
+// A single-speed electric car's light bar: a power meter in the player's own colour, which brightens with the
+// motor's output from the player's dim colour at none to four times as bright at full power; while the motor
+// brakes the car, green is added to the player's colour with the braking (in 12 steps each, as the shift
+// light). It never flashes: there is no shift to call, and the top speed needs nothing done.
+LedColor motor_light_led(const ShiftLightState& s, int player);
 
 } // namespace ffb
 

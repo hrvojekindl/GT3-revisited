@@ -43,6 +43,7 @@ void electric_hold(Car& c) {
 // while the race or a stop holds the car.
 F electric_output(Car& c, F x) {
     const Engine& e = c.p.e;
+    c.ev.power = F(), c.ev.braking = F();
     if (c.race_hold != 0 || c.hold != 0) return F();
     const F w = driven_axle_speed(c) * c.p.d.ratio[c.gear];
     const F aw = abs_f(w);
@@ -57,8 +58,11 @@ F electric_output(Car& c, F x) {
         if (c.ev.regen_power / aw < regen) regen = c.ev.regen_power / aw;
         regen = (regen * lift) * clamp01(aw / (kKmh5 * abs_f(c.p.d.gear_speed[1])));
         t = F() < w ? t - regen : t + regen;
+        if (F() < c.ev.regen_torque) c.ev.braking = clamp01(regen / c.ev.regen_torque);
     }
-    return power_cap(e, t, aw);
+    const F out = power_cap(e, t, aw);
+    c.ev.power = out * w;
+    return out;
 }
 
 } // namespace

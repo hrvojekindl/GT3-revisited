@@ -403,6 +403,8 @@ part of the step (tyres, suspension, aids, the AI) is GT3's.
   banks (`src/audio/motor_sound.*`). They play through the normal engine sound
   path: pitch follows the motor, the inverter sound swells under load, and
   Doppler and panning work as usual.
+- **Light bar:** a DualSense or DualShock 4 shows the motor's power and its
+  braking instead of a shift light (docs/INPUT.md, "Shift light").
 
 ### Checking a car
 

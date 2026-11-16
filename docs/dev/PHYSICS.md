@@ -207,6 +207,7 @@ keep their recent results (`ee_math.cpp`).
 - Electric mod cars take a path of their own through phase 7's engine, clutch and
   gearbox steps (`ElectricDrive`, set at the race start by `electric_drive` from the
   database, outside the record; docs/MODDING.md "Electric cars"). GT3's cars never
-  take it.
+  take it. Each step also leaves the motor's output and braking in it (`power`,
+  `braking`) for the light bar (`exact_telemetry`); the step never reads them back.
 - The HUD's boost gauge reads the turbo's boost factor from the two lagged stages
   minus 1 (`exact_telemetry`); how the game's gauge maps it is not pinned down.

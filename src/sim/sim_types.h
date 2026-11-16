@@ -134,6 +134,7 @@ struct VehicleSetup {
     float shift_light_rpm() const { return upshift_rpm > 0 ? upshift_rpm : rev_limit_rpm - 500; }
     bool has_turbo = false;
     float max_boost = 0;          // cap - 1 (physics §2.3), same unit as VehicleTelemetry::boost
+    float motor_power = 0;        // ours: an electric mod car's full motor power (W, its curve's peak); 0 for an engine
 };
 
 // A step's values beyond the drawn state, as the sounds, smoke, dirt, HUD lamps and gauges, rumble and force
@@ -199,6 +200,9 @@ struct VehicleTelemetry {
     // driver kind is set (a car the AI drives, as in a run-up or after the finish, sends nothing).
     bool pad_output = false;
     bool wear_on = false;
+    // Ours, an electric mod car's motor on the step (sim::exact::ElectricDrive; 0 for an engine): its output (W,
+    // + driving, - braking the car) and its lift-off braking over its full braking (0..1). The light bar's power meter.
+    float motor_power = 0, motor_braking = 0;
     float dirt = -1; // the car's dirt (engine condition word 3, F+0x404; 0..0.8)
 };
 

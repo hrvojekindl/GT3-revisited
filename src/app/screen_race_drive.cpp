@@ -664,13 +664,22 @@ void RaceScreen::update_drive(App& app, double dt) {
                 app.input().set_force_feedback(1, f);
             }
         // The light bar's shift light: not feedback, so whatever the Vibration option; not the title
-        // screen's attract run, which the computer drives. A single-speed car (an electric one) never shifts: no light.
-        auto revs = [](const sim::VehicleState& s, const sim::VehicleSetup& su) {
-            return ShiftLightState{s.engine_rpm, su.forward_gears > 1 ? su.shift_light_rpm() : 0.0f, s.rev_limiter};
+        // screen's attract run, which the computer drives. A single-speed car never shifts: no shift light; an electric
+        // one shows its motor's power and braking instead.
+        auto revs = [](const sim::VehicleState& s, const sim::VehicleSetup& su, const sim::VehicleTelemetry* t) {
+            ShiftLightState l{s.engine_rpm, su.forward_gears > 1 ? su.shift_light_rpm() : 0.0f, s.rev_limiter};
+            if (su.motor_power > 0 && t) {
+                l.motor = true;
+                l.motor_power = t->motor_power / su.motor_power, l.motor_braking = t->motor_braking;
+            }
+            return l;
         };
-        if (!finished_ && !attract_) app.input().set_shift_light(0, revs(vehicle_->state(), vehicle_->setup()));
-        if (field_ && field_->has_second() && !finished2_ && !attract_)
-            app.input().set_shift_light(1, revs(field_->second_state(), field_->second_setup()));
+        if (!finished_ && !attract_)
+            app.input().set_shift_light(0, revs(vehicle_->state(), vehicle_->setup(), vehicle_->telemetry()));
+        if (field_ && field_->has_second() && !finished2_ && !attract_) {
+            const ShiftLightState l = revs(field_->second_state(), field_->second_setup(), field_->second_telemetry());
+            app.input().set_shift_light(1, l);
+        }
     }
     ffb_wall_ = ffb_car_ = ffb_wall2_ = ffb_car2_ = 0;
 }
