@@ -318,10 +318,11 @@ struct GearSettings {
     u8 down_brake = 0;    // +0x17 B2: + 100 B2 with brake > 0.8
 };
 
-// An electric mod car's drive, which GT3's step does not have: the motor turns with the driven wheels through the single
-// reduction, so the clutch stays locked (no slip, no launch) and the car never shifts; the motor's curve starts at
-// standstill; the top speed (the rev limit) fades the drive out instead of cutting it; a lifted accelerator brakes with the
-// motor (regen), which the friction brakes take over near standstill to stop and hold the car (tick_engine.cpp).
+// An electric mod car's drive, which GT3's step does not have: the motor turns with the driven wheels through the
+// single reduction, so the clutch stays locked (no slip, no launch) and the car never shifts, changing direction only
+// near standstill (tick_gear.cpp); the motor's curve starts at standstill; the top speed (the rev limit) fades the drive
+// out instead of cutting it; a lifted accelerator brakes with the motor (regen, eased off as the driven tyres slip),
+// which the friction brakes take over near standstill to stop and hold the car (tick_engine.cpp).
 struct ElectricDrive {
     bool on = false;
     F regen_torque; // the lift-off braking torque at the motor (N m)

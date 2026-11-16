@@ -155,6 +155,12 @@ u8 exact_course_category(const data::CarDatabase& db, const std::string& course)
     return r && r->size() >= 9 ? ex::race_course_category(*r) : 0; // (the database's course records are 9 bytes or more)
 }
 
+namespace {
+// Mixed into the fingerprint for an electric mod car on the electric drive. Change it when the drive changes how such a
+// car races, so replays recorded with the old drive are refused rather than played differently.
+constexpr u64 kElectricDriveVersion = 0xE1EC7D01;
+} // namespace
+
 u64 exact_data_fingerprint(const data::CarDatabase& db, std::span<const ex::StartEntry> entries, ByteSpan course_file) {
     u64 h = hash_bytes(course_file);
     auto mix = [&](data::TableId t, u64 id) {
@@ -165,10 +171,10 @@ u64 exact_data_fingerprint(const data::CarDatabase& db, std::span<const ex::Star
     };
     for (const ex::StartEntry& e : entries) {
         mix(data::TableId::Car, e.eq.car);
-        // An electric car's drive is not in its records: its regen and the drive's version (a build without the drive, or
-        // with another, then refuses the race instead of running it on GT3's engine).
+        // An electric mod car's drive is not in its records: its regen and the drive's version, so a build without the
+        // drive, or with another one, refuses the race instead of running it differently.
         if (const ex::ElectricDrive d = ex::electric_drive(&db, e.eq); d.on)
-            for (u64 v : {u64(0xE1EC7D01), u64(d.regen_torque.bits), u64(d.regen_power.bits)})
+            for (u64 v : {kElectricDriveVersion, u64(d.regen_torque.bits), u64(d.regen_power.bits)})
                 h = (h ^ v) * 1099511628211ull;
         for (size_t t = 0; t < e.eq.part.size(); ++t) {
             const ByteSpan* r = mix(data::TableId(t), e.eq.part[t]);

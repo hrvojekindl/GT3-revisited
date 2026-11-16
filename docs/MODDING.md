@@ -392,19 +392,31 @@ part of the step (tyres, suspension, aids, the AI) is GT3's.
   There is no idle, no clutch slip and no gear changes, and full torque is
   available from standstill. The default curve holds constant torque up to the
   base speed, then constant power, easing to 85 % at `max_rpm`. `max_rpm` also
-  acts as the top-speed limiter: the drive fades out over its last 2 %.
+  acts as the top-speed limiter: the drive fades out over its last 2 %. The car
+  changes between forward and reverse only below 5 km/h. The HUD's tachometer
+  has no red band and no shift light for it, since it never shifts.
 - **AWD:** both axles get a fixed torque split (one motor per axle).
 - **One-pedal driving:** lifting off brakes the car with the motor instead of
   engine braking: `regen_g` (default 0.2 g) at town speeds, power-limited at
   highway speeds like real cars. The regen fades in over the accelerator's first
-  10 %. Below 5 km/h the friction brakes take over from it, and the car stops and
-  holds while the accelerator is up.
+  10 %, and eases off when the driven tyres slip past their best braking slip
+  (as ABS does for the brakes), so on a slippery surface it slows the wheels
+  without dragging them down. Below 5 km/h the friction brakes take over from it,
+  and the car stops and holds while the accelerator is up.
 - **Sound:** a motor whine and an inverter sound are synthesised as engine sound
   banks (`src/audio/motor_sound.*`). They play through the normal engine sound
   path: pitch follows the motor, the inverter sound swells under load, and
   Doppler and panning work as usual.
 - **Light bar:** a DualSense or DualShock 4 shows the motor's power and its
   braking instead of a shift light (docs/INPUT.md, "Shift light").
+- **Replays and online:** the drive is not in the car's records, so a replay
+  keeps its regen and a version of the drive in its data fingerprint. A replay,
+  or a free run's ghost (played from its replay), of an electric car recorded by
+  a game with another drive, or none, is refused rather than played
+  differently. A whole-run ghost is not checked against the fingerprint (for any
+  car). Online, a game without the drive builds the car on its donor's engine,
+  so the lobby shows it as different there. Replays recorded before the drive
+  existed still play on the donor's engine.
 
 ### Checking a car
 

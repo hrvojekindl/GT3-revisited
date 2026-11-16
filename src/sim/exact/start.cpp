@@ -579,9 +579,12 @@ ElectricDrive electric_drive(const data::CarDatabase* db, const Equipment& eq) {
     const std::string label = db->label(eq.car);
     const data::ModCar* m = db->mod_car(label);
     const data::Car* car = db->car(label);
+    // On its own motor only (part slot 6, the engine): an entry recorded with its donor's engine keeps GT3's drive.
     if (!m || !m->electric || !car || eq.part[size_t(data::TableId::Engine)] != car->parts[6]) return ev;
     ev.on = true;
-    // Rounded (0.01 N m, 1 W): a last-bit difference in how a platform computed them cannot part a replay.
+    // Rounded (0.01 N m, 1 W): add_mod_car computes them in host floats, whose last bit can differ between compilers.
+    // The rounding makes such a difference unlikely to survive; one that does is in the replay's data fingerprint, so
+    // another build refuses the replay rather than playing it differently. (Online, each car is its owner's to drive.)
     ev.regen_torque = F(float(std::round(double(m->regen_torque_nm) * 100.0) / 100.0));
     ev.regen_power = F(float(std::round(double(m->regen_kw) * 1000.0)));
     return ev;

@@ -865,10 +865,14 @@ it was: equipment with its parts and settings, pedal style, wheel type, ASM / TC
 grid slot), the fingerprint of the program's tables it ran on, the behaviour it ran with (the rules
 and step rate, `sim::Behaviour`: the disc's release's rules at 60 steps a second, online NTSC-U's), a
 fingerprint of the game data it was built from (`exact_data_fingerprint`: the course file and every
-entry's database records), every car's pad frame of every step (changed fields only; a CPU car's stream
+entry's database records; for an electric mod car on the electric drive also its regen and the drive's
+version, `kElectricDriveVersion`, which no record holds), every car's pad frame of every step (changed fields only; a CPU car's stream
 stays empty; the free run ghost's extra steps' reads apart), the game's own changes to the race between
 steps (`RaceChange`: the start countdown, the pause menu's AT / MT, a seeded engine condition, an AI
-take-over) and `race_hash` after the last step. Version 4 keeps each entry's spark points (`RaceRecord::sparks`; an
+take-over) and `race_hash` after the last step. Version 6 keeps each recorder snapshot's electric drive
+(`Car::ev`, which the car's record image lacks), so a free run's ghost restored from it drives as it was
+recorded; an older record's snapshots have none, as no game that wrote one had the drive. Version 4 keeps
+each entry's spark points (`RaceRecord::sparks`; an
 older record plays without sparks, as it ran). Version 3 also keeps the solo modes' recorders as the run
 starts (`sim::exact::SoloRecorders`, their record memory stored sparse) and the run's own pad frame recording
 (`RaceRecord::run_recording`: the player's device's block as the race's end closes it, GT3's recorder),

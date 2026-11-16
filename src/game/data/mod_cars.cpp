@@ -830,7 +830,9 @@ bool add_mod_car(CarDatabase& db, const ModCarDef& def, std::string* error, cons
         // Regen: lift-off deceleration regen_g (default 0.2 g, typical one-pedal driving) turned
         // into motor torque through the driven tyre and the reduction; power-limited at speed.
         float r = 0.33f; // driven tyre radius, m
-        if (auto ts = drive == 1 ? def.front_tire : def.rear_tire) { // (separate statements: no fused multiply-add)
+        // (Host floats: a compiler may fuse the sum below into a multiply-add, Clang only within one statement, GCC on
+        // arm64 across them, so the last bit can differ between builds. electric_drive rounds the result.)
+        if (auto ts = drive == 1 ? def.front_tire : def.rear_tire) {
             const float rim = ts->rim_in * 0.0127f;
             const float sidewall = ts->width_mm_5 * 5 * 0.001f * ts->aspect_5 * 5 * 0.01f;
             r = rim + sidewall;
