@@ -462,7 +462,11 @@ recognised by name:
 
 The body is lit with GT3's car lighting and gets GT3's reflection pass on paint
 and glass. Wheels, tyres, the ground shadow, lamp glows and camera points still
-come from the donor's car file; the shadow is stretched to the car's size.
+come from the donor's car file; the shadow is stretched to the car's size. The
+lamp glows (night and dusk courses) move onto the body's own lamps: on each
+side, the donor's headlamp glows go to the middle of the `head`/`lamp`/`light`
+materials, and its tail and brake lamp glows to the middle of the
+`brake`/`tail` materials. A side without such materials keeps the donor's.
 
 ## Adding events
 

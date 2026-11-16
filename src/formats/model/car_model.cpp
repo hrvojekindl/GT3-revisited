@@ -267,20 +267,45 @@ int gtm1_lod_count(const gtm1::Gtm1& g, u32 node) {
     return 8;
 }
 
+namespace {
+
+// fit_body's map: z scales by kz between the axles (half wheelbase hw0 -> hw1) and by ko beyond them, x by kx, y by ky.
+struct FitMap {
+    bool ok = false;
+    float hw0 = 0, hw1 = 0, kz = 1, ko = 1, kx = 1, ky = 1;
+    explicit FitMap(const BodyFit& f) {
+        if (f.from_wheelbase <= 0 || f.to_wheelbase <= 0 || f.from_width <= 0 || f.from_height <= 0) return;
+        ok = true;
+        hw0 = f.from_wheelbase * 0.0005f, hw1 = f.to_wheelbase * 0.0005f; // half wheelbase, m
+        const float oh0 = f.from_length - f.from_wheelbase, oh1 = f.to_length - f.to_wheelbase;
+        kz = hw1 / hw0, ko = oh0 > 1 && oh1 > 1 ? oh1 / oh0 : kz;
+        kx = f.to_width / f.from_width, ky = f.to_height / f.from_height;
+    }
+    float slope(float z) const { return std::fabs(z) <= hw0 ? kz : ko; } // of the z map at z (for the normals)
+    void point(float* p) const {
+        const float z = p[2], a = std::fabs(z);
+        p[2] = a <= hw0 ? z * kz : std::copysign(hw1 + (a - hw0) * ko, z);
+        p[0] *= kx;
+        p[1] *= ky;
+    }
+};
+
+} // namespace
+
+void fit_body_point(const BodyFit& f, float* p) {
+    const FitMap map(f);
+    if (map.ok) map.point(p);
+}
+
 void fit_body(scene::Model& m, const BodyFit& f) {
-    if (f.from_wheelbase <= 0 || f.to_wheelbase <= 0 || f.from_width <= 0 || f.from_height <= 0) return;
-    const float hw0 = f.from_wheelbase * 0.0005f, hw1 = f.to_wheelbase * 0.0005f; // half wheelbase, m
-    const float oh0 = f.from_length - f.from_wheelbase, oh1 = f.to_length - f.to_wheelbase;
-    const float kz = hw1 / hw0, ko = oh0 > 1 && oh1 > 1 ? oh1 / oh0 : kz;
-    const float kx = f.to_width / f.from_width, ky = f.to_height / f.from_height;
+    const FitMap map(f);
+    if (!map.ok) return;
+    const float kx = map.kx, ky = map.ky;
     for (scene::Mesh& mesh : m.meshes) {
         if (mesh.name.rfind("wheel_", 0) == 0) continue;
         for (scene::Vertex& v : mesh.vertices) {
-            float z = v.pos[2], a = std::fabs(z);
-            float dz = a <= hw0 ? kz : ko; // slope of the map at z (for the normals)
-            v.pos[2] = a <= hw0 ? z * kz : std::copysign(hw1 + (a - hw0) * ko, z);
-            v.pos[0] *= kx;
-            v.pos[1] *= ky;
+            const float dz = map.slope(v.pos[2]);
+            map.point(v.pos);
             float n[3] = {v.normal[0] / kx, v.normal[1] / ky, v.normal[2] / dz};
             float l = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
             if (l > 0)

@@ -29,6 +29,7 @@
 
 #include <array>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace gt3r::race {
@@ -146,6 +147,15 @@ struct CarLampSet {
     // `gtci` = the car file's GTCI block.
     static CarLampSet parse(ByteSpan gtci);
     bool empty() const { return head.empty() && tail.empty() && brake.empty(); }
+    // Ours, mod cars (formats/model/car_model.h CarBodyMod), whose lamps are their donor's car file's:
+    // `map` moves every lamp's point and test point (a stretched shell's, fit_body_point), and
+    // move_onto puts each side's head lamps on a body's own head lamps and its tail and brake lamps on
+    // its rear ones ([0] the car's left, x < 0; [1] its right; formats/model/gltf.h glb_lamps), each
+    // group moved as one so its layout stays. A side without a spot keeps its lamps; lamps on the
+    // middle (|x| < 5 cm) take the mean of the two sides' moves, along y and z only.
+    using Spots = std::array<std::optional<render::Vec3>, 2>;
+    void map(const std::function<render::Vec3(const render::Vec3&)>& f);
+    void move_onto(const Spots& head_spots, const Spots& rear_spots);
 };
 
 class CarLampGlows {

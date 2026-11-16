@@ -16,6 +16,7 @@
 #include "game/data/mod_cars.h"
 #include "exact_drive.h"
 #include "race/exact_setup.h"
+#include "race/lamp_glows.h"
 #include "race/results.h"
 #include "sim/exact/start.h"
 #include "sim/car_spec.h"
@@ -191,6 +192,12 @@ TEST(body_fit_maps_axles) {
     CHECK(std::fabs(v[0].pos[0] - 0.85f * 1900 / 1700) < 1e-4f);
     CHECK(std::fabs(v[0].pos[1] - 1.6f) < 1e-4f);
     CHECK(m.meshes[1].vertices[0].pos[2] == -1.3f); // wheels untouched
+    // A point (the car file's lamps) goes where the shell's vertex at it went.
+    for (size_t i = 0; i < 4; ++i) {
+        float p[3] = {0.85f, 1.4f, i == 0 ? -1.3f : i == 1 ? 1.3f : i == 2 ? -2.3f : 2.3f};
+        fit_body_point({4600, 2600, 1700, 1400, 4800, 2900, 1900, 1600}, p);
+        CHECK(p[0] == v[i].pos[0] && p[1] == v[i].pos[1] && p[2] == v[i].pos[2]);
+    }
 }
 
 // A mod's texts (UTF-8 in its files) go into the database as game text, as the disc's own names: Latin letters as the
@@ -486,6 +493,97 @@ TEST(glb_import) {
     CHECK(b.vertices[0].color == 0xFF0000FFu); // the paint colour (RGBA8 in memory order R, G, B, A)
     CHECK(b.vertices[0].normal[2] < -0.99f);   // computed normal, turned with the model (faces -Z now)
     CHECK(m.meshes[1].primitives[0].flags & scene::kEnvironmentMap);
+}
+
+namespace {
+// A glb of one mesh, one primitive per (material name, unindexed triangle positions in glTF axes).
+Bytes glb_of(const std::vector<std::pair<std::string, std::vector<float>>>& prims) {
+    Bytes bin;
+    std::string views, accessors, primitives, materials;
+    for (size_t i = 0; i < prims.size(); ++i) {
+        const std::vector<float>& p = prims[i].second;
+        const std::string sep = i ? "," : "", n = std::to_string(i);
+        views += sep + R"({"buffer":0,"byteOffset":)" + std::to_string(bin.size()) + R"(,"byteLength":)" +
+                 std::to_string(p.size() * 4) + "}";
+        accessors += sep + R"({"bufferView":)" + n + R"(,"componentType":5126,"count":)" +
+                     std::to_string(p.size() / 3) + R"(,"type":"VEC3"})";
+        primitives += sep + R"({"attributes":{"POSITION":)" + n + R"(},"material":)" + n + "}";
+        materials += sep + R"({"name":")" + prims[i].first +
+                     R"(","pbrMetallicRoughness":{"baseColorFactor":[1,1,1,1]}})";
+        const size_t o = bin.size();
+        bin.resize(o + p.size() * 4);
+        std::memcpy(bin.data() + o, p.data(), p.size() * 4);
+    }
+    std::string js = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],)"
+                     R"("meshes":[{"primitives":[)" + primitives + R"(]}],"materials":[)" + materials +
+                     R"(],"buffers":[{"byteLength":)" + std::to_string(bin.size()) + R"(}],"bufferViews":[)" + views +
+                     R"(],"accessors":[)" + accessors + "]}";
+    while (js.size() % 4) js += ' ';
+    Bytes out(12);
+    auto put32 = [&](u32 v) { size_t o = out.size(); out.resize(o + 4); std::memcpy(out.data() + o, &v, 4); };
+    std::memcpy(out.data(), "glTF", 4);
+    u32 v2 = 2, total = u32(12 + 8 + js.size() + 8 + bin.size());
+    std::memcpy(out.data() + 4, &v2, 4);
+    std::memcpy(out.data() + 8, &total, 4);
+    put32(u32(js.size()));
+    put32(0x4E4F534A);
+    out.insert(out.end(), js.begin(), js.end());
+    put32(u32(bin.size()));
+    put32(0x004E4942);
+    out.insert(out.end(), bin.begin(), bin.end());
+    return out;
+}
+} // namespace
+
+// A glTF body's own lamps, where the race puts its car file's lamp glows: each side's head lamps
+// (here glTF +X, the car's left, at 0.6..0.8 m) and rear lamps, in GT3's axes.
+TEST(glb_lamps_by_side) {
+    const Bytes glb = glb_of({
+        {"Body Paint", {0, 0, 0, 1, 0, 0, 0, 1, 0}},
+        {"headlamp", {0.6f, 0.6f, 2.0f, 0.8f, 0.6f, 2.0f, 0.7f, 0.7f, 2.0f,         // the car's left
+                      -0.6f, 0.6f, 2.0f, -0.8f, 0.6f, 2.0f, -0.7f, 0.7f, 2.0f}},    // its right
+        {"Tail Lamp", {0.5f, 0.9f, -2.2f, 0.9f, 0.9f, -2.2f, 0.7f, 1.0f, -2.2f}},   // the left only
+    });
+    const GlbLamps l = glb_lamps(glb);
+    auto close_to = [](const GlbLamps::Spot& s, float x, float y, float z) {
+        return s && std::fabs((*s)[0] - x) < 1e-5f && std::fabs((*s)[1] - y) < 1e-5f && std::fabs((*s)[2] - z) < 1e-5f;
+    };
+    CHECK(close_to(l.head[0], -0.7f, 0.65f, -2.0f) && close_to(l.head[1], 0.7f, 0.65f, -2.0f));
+    CHECK(close_to(l.rear[0], -0.7f, 0.95f, 2.2f) && !l.rear[1]);
+    // No lamp materials: no spots.
+    const GlbLamps none = glb_lamps(tiny_glb());
+    CHECK(!none.head[0] && !none.head[1] && !none.rear[0] && !none.rear[1]);
+}
+
+// The car file's lamps moved onto those spots: each side's group by its own box's middle (its layout kept, the
+// test points with it), the middle lamps by the sides' mean along y and z, a side without a spot left alone.
+TEST(car_lamps_move_onto_body) {
+    auto rec = [](float x, float y, float z) {
+        race::CarLampRecord r;
+        r.pos = {x, y, z}, r.test = {x, y, z - 0.3f};
+        return r;
+    };
+    race::CarLampSet s;
+    s.head = {rec(-0.6f, 0.5f, -2.0f), rec(-0.4f, 0.5f, -2.0f), rec(0.5f, 0.5f, -2.0f)};
+    s.tail = {rec(-0.8f, 0.6f, 2.1f), rec(0.0f, 0.9f, 2.1f), rec(0.8f, 0.6f, 2.1f)};
+    s.brake = {rec(-0.8f, 0.6f, 2.1f), rec(0.8f, 0.6f, 2.1f)};
+    race::CarLampSet::Spots head = {render::Vec3{-0.7f, 0.65f, -2.1f}, std::nullopt};
+    race::CarLampSet::Spots rear = {render::Vec3{-0.7f, 0.95f, 2.2f}, render::Vec3{0.7f, 0.85f, 2.2f}};
+    s.move_onto(head, rear);
+    auto at = [](const render::Vec3& p, float x, float y, float z) {
+        return std::fabs(p.x - x) < 1e-5f && std::fabs(p.y - y) < 1e-5f && std::fabs(p.z - z) < 1e-5f;
+    };
+    // Left head lamps: box middle (-0.5, 0.5, -2.0) to (-0.7, 0.65, -2.1), 0.2 m apart still.
+    CHECK(at(s.head[0].pos, -0.8f, 0.65f, -2.1f) && at(s.head[1].pos, -0.6f, 0.65f, -2.1f));
+    CHECK(at(s.head[0].test, -0.8f, 0.65f, -2.4f));
+    CHECK(at(s.head[2].pos, 0.5f, 0.5f, -2.0f)); // no right head spot: stays
+    // Tail and brake lamps move as one group per side; the middle one by the mean along y and z.
+    CHECK(at(s.tail[0].pos, -0.7f, 0.95f, 2.2f) && at(s.brake[0].pos, -0.7f, 0.95f, 2.2f));
+    CHECK(at(s.tail[2].pos, 0.7f, 0.85f, 2.2f) && at(s.brake[1].pos, 0.7f, 0.85f, 2.2f));
+    CHECK(at(s.tail[1].pos, 0.0f, 1.2f, 2.2f));
+    // map moves every point and test point.
+    s.map([](const render::Vec3& p) { return render::Vec3{p.x, p.y + 1, p.z}; });
+    CHECK(at(s.head[2].pos, 0.5f, 1.5f, -2.0f) && at(s.head[2].test, 0.5f, 1.5f, -2.3f));
 }
 
 // --- the shipped example mod (examples/mods/example_coupe) --------------------------

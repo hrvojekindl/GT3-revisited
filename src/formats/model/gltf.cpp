@@ -151,9 +151,48 @@ u32 rgba8(float r, float g, float b, float a) {
     return c(r) | c(g) << 8 | c(b) << 16 | c(a) << 24;
 }
 
+// The boxes round each side's head and rear lamps (glb_lamps).
+struct LampBoxes {
+    struct Box {
+        bool any = false;
+        float lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
+        void add(const float* p) {
+            for (int k = 0; k < 3; ++k) {
+                lo[k] = any ? std::min(lo[k], p[k]) : p[k];
+                hi[k] = any ? std::max(hi[k], p[k]) : p[k];
+            }
+            any = true;
+        }
+        GlbLamps::Spot middle() const {
+            if (!any) return std::nullopt;
+            return std::array<float, 3>{(lo[0] + hi[0]) * 0.5f, (lo[1] + hi[1]) * 0.5f, (lo[2] + hi[2]) * 0.5f};
+        }
+    };
+    std::array<Box, 2> head, rear;
+};
+
+// load_glb; with `lamps`, also the lamps' boxes (and no textures decoded: the white one stands in).
+scene::Model load_glb_impl(ByteSpan d, const GlbOptions& opt, const std::string& name, LampBoxes* lamps);
+
 } // namespace
 
 scene::Model load_glb(ByteSpan d, const GlbOptions& opt, const std::string& name) {
+    return load_glb_impl(d, opt, name, nullptr);
+}
+
+GlbLamps glb_lamps(ByteSpan d) {
+    LampBoxes boxes;
+    GlbOptions opt;
+    opt.reflections = false;
+    load_glb_impl(d, opt, {}, &boxes);
+    GlbLamps out;
+    for (size_t s = 0; s < 2; ++s) out.head[s] = boxes.head[s].middle(), out.rear[s] = boxes.rear[s].middle();
+    return out;
+}
+
+namespace {
+
+scene::Model load_glb_impl(ByteSpan d, const GlbOptions& opt, const std::string& name, LampBoxes* lamps) {
     if (d.size() < 20 || std::memcmp(d.data(), "glTF", 4) != 0) throw FormatError("not a binary glTF (.glb) file");
     if (rd32(d, 4) != 2) throw FormatError("glTF: only version 2 is supported");
     Glb g;
@@ -225,7 +264,11 @@ scene::Model load_glb(ByteSpan d, const GlbOptions& opt, const std::string& name
             if (pbr["baseColorFactor"].size() == 4) base[k] = float(pbr["baseColorFactor"][size_t(k)].number());
         if (role == Role::Paint && opt.paint)
             for (int k = 0; k < 3; ++k) base[k] = (*opt.paint)[size_t(k)];
-        int tex = pbr["baseColorTexture"].is_object() ? texture_for(pbr["baseColorTexture"]["index"].integer()) : 0;
+        const Value& base_tex = pbr["baseColorTexture"];
+        const int tex = base_tex.is_object() && !lamps ? texture_for(base_tex["index"].integer()) : 0;
+        LampBoxes::Box* box[2] = {nullptr, nullptr};
+        if (lamps && role == Role::Lamp) box[0] = &lamps->head[0], box[1] = &lamps->head[1];
+        if (lamps && role == Role::BrakeLamp) box[0] = &lamps->rear[0], box[1] = &lamps->rear[1];
         float emissive[3] = {0, 0, 0};
         for (int k = 0; k < 3; ++k)
             if (mat["emissiveFactor"].size() == 3) emissive[k] = float(mat["emissiveFactor"][size_t(k)].number());
@@ -241,6 +284,7 @@ scene::Model load_glb(ByteSpan d, const GlbOptions& opt, const std::string& name
             float p[3] = {pos.get(i, 0), pos.get(i, 1), pos.get(i, 2)}, q[3];
             world.point(p, q);
             v.pos[0] = -q[0], v.pos[1] = q[1], v.pos[2] = -q[2]; // glTF faces +Z; GT3 noses point to -Z
+            if (box[0]) box[v.pos[0] < 0 ? 0 : 1]->add(v.pos);
             if (nrm) {
                 float n[3] = {nrm->get(i, 0), nrm->get(i, 1), nrm->get(i, 2)}, m[3];
                 nm.dir(n, m);
@@ -339,5 +383,7 @@ scene::Model load_glb(ByteSpan d, const GlbOptions& opt, const std::string& name
     model.compute_bounds();
     return model;
 }
+
+} // namespace
 
 } // namespace gt3r

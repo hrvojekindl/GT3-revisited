@@ -2,6 +2,7 @@
 
 #include "base/log.h"
 #include "formats/course/course_model.h"
+#include "formats/model/gltf.h"
 #include "formats/model/wheel_model.h"
 #include "race/interp.h"
 
@@ -20,6 +21,31 @@ const char* const kWheelNames[4] = {"wheel_fl", "wheel_fr", "wheel_rl", "wheel_r
 void log_bounds(const char* what, const scene::Model& m) {
     LOG_INFO("Race: %s bounds (%.0f %.0f %.0f) .. (%.0f %.0f %.0f), %zu meshes", what, m.bounds_min[0], m.bounds_min[1],
              m.bounds_min[2], m.bounds_max[0], m.bounds_max[1], m.bounds_max[2], m.meshes.size());
+}
+
+// A mod car's lamp glows (its car file's, the donor's): with the stretched shell, then on a glTF body's own lamps,
+// which sit glb_ground lower in the car's frame (apply_body_mod).
+void fit_lamps(CarLampSet& lamps, const CarBodyMod& mod, const std::string& model) {
+    if (lamps.empty() || !mod.active()) return;
+    if (mod.fit)
+        lamps.map([&f = *mod.fit](const render::Vec3& p) {
+            float q[3] = {p.x, p.y, p.z};
+            fit_body_point(f, q);
+            return render::Vec3{q[0], q[1], q[2]};
+        });
+    if (!mod.glb) return;
+    try {
+        const GlbLamps own = glb_lamps(*mod.glb);
+        auto spots = [&](const std::array<GlbLamps::Spot, 2>& s) {
+            CarLampSet::Spots out;
+            for (size_t i = 0; i < 2; ++i)
+                if (s[i]) out[i] = render::Vec3{(*s[i])[0], (*s[i])[1] - mod.glb_ground, (*s[i])[2]};
+            return out;
+        };
+        lamps.move_onto(spots(own.head), spots(own.rear));
+    } catch (const std::exception& e) {
+        LOG_WARN("Car %s: its body's lamps: %s", model.c_str(), e.what());
+    }
 }
 
 } // namespace
@@ -374,6 +400,7 @@ CarVisual::CarVisual(render::GpuContext& ctx, ByteSpan car_file, const std::stri
         LOG_INFO("Car %s: lamps %zu head, %zu tail, %zu brake", model.c_str(), lamps_.head.size(), lamps_.tail.size(), lamps_.brake.size());
     } catch (const std::exception&) {
     }
+    fit_lamps(lamps_, body_mod, model);
     {
         // The brake-lamp variant: the node programs' brake switch (selector id 0) takes its
         // "pressed" branch (lit lens chunks with lamp materials).

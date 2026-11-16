@@ -60,12 +60,17 @@ struct BodyFit {
     float to_length = 0, to_wheelbase = 0, to_width = 0, to_height = 0;
 };
 void fit_body(scene::Model& m, const BodyFit& f);
+// A point of the borrowed body (x, y, z in its model frame, metres) where fit_body moves it: the
+// car file's lamps on a stretched shell.
+void fit_body_point(const BodyFit& f, float* p);
 
 // How a mod car's body differs from the car file it borrows (game/data/mod_cars.h).
 struct CarBodyMod {
-    std::optional<BodyFit> fit;                // stretch the borrowed body (and its shadows)
-    std::shared_ptr<const Bytes> glb;          // a body of its own (binary glTF); shadows, lamps,
-                                               // wheels and camera points stay the car file's
+    std::optional<BodyFit> fit;                // stretch the borrowed body (and its shadows, and its
+                                               // lamps' glows: fit_body_point)
+    std::shared_ptr<const Bytes> glb;          // a body of its own (binary glTF); shadows, wheels and
+                                               // camera points stay the car file's, its lamp glows go
+                                               // onto the body's own lamps (glb_lamps)
     // glTF bodies have their origin on the ground; GT3's body frame sits at the
     // stock ride height (the race lifts the body by the current ride height),
     // so the glTF body is moved down by this much (metres).

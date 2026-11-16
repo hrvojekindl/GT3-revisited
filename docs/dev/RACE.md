@@ -2042,7 +2042,10 @@ by the course area):
   on board has none), the GTCI lists (+0x40 headlamps always,
   +0x50 brake lamps while braking at k/4 or 1, +0x48 tail lamps as a halo only) with the
   Env0 +0x9F0 lamp type (colour x intensity, glow x 8, halo, gain, attenuation c / l / q,
-  max distance). At most 100 records pass the screen test at the record's test point (in
+  max distance). Ours, mod cars: the donor's lists, moved with a stretched shell
+  (`fit_body_point`) and, on a glTF body, onto its own lamps per side (`glb_lamps`,
+  `CarLampSet::move_onto`; `race_scene.cpp` `fit_lamps`). At most 100 records pass the
+  screen test at the record's test point (in
   front, within the max distance, a square of halo x max(a, b) on screen). Round head and
   brake lamps (|a - b| < 0.01) get the `race/flare.bin` star (`race::Flare`, as the course
   lamps) at the lamp, its depth moved by + 0.5 x the viewing axis' view-space z, scaled by

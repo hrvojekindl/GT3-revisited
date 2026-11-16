@@ -358,6 +358,45 @@ CarLampSet CarLampSet::parse(ByteSpan g) {
     return out;
 }
 
+void CarLampSet::map(const std::function<render::Vec3(const render::Vec3&)>& f) {
+    for (std::vector<CarLampRecord>* v : {&head, &tail, &brake})
+        for (CarLampRecord& l : *v) l.pos = f(l.pos), l.test = f(l.test);
+}
+
+void CarLampSet::move_onto(const Spots& head_spots, const Spots& rear_spots) {
+    constexpr float kMiddle = 0.05f; // m either side of the centre line
+    auto side = [](const CarLampRecord& l) { return l.pos.x < -kMiddle ? 0 : l.pos.x > kMiddle ? 1 : -1; };
+    // Each group (the head lamps; the tail and brake lamps together) moves by its own box's middle
+    // to the spot on each side.
+    auto move = [&](std::initializer_list<std::vector<CarLampRecord>*> group, const Spots& spots) {
+        std::array<std::optional<render::Vec3>, 2> by{};
+        for (int s = 0; s < 2; ++s) {
+            if (!spots[size_t(s)]) continue;
+            bool any = false;
+            render::Vec3 lo, hi;
+            for (std::vector<CarLampRecord>* v : group)
+                for (const CarLampRecord& l : *v) {
+                    if (side(l) != s) continue;
+                    const render::Vec3& p = l.pos;
+                    lo = any ? render::Vec3{std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)} : p;
+                    hi = any ? render::Vec3{std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)} : p;
+                    any = true;
+                }
+            if (any) by[size_t(s)] = *spots[size_t(s)] - (lo + hi) * 0.5f;
+        }
+        std::optional<render::Vec3> middle;
+        if (by[0] && by[1]) middle = render::Vec3{0, (by[0]->y + by[1]->y) * 0.5f, (by[0]->z + by[1]->z) * 0.5f};
+        for (std::vector<CarLampRecord>* v : group)
+            for (CarLampRecord& l : *v) {
+                const int s = side(l);
+                const std::optional<render::Vec3>& d = s < 0 ? middle : by[size_t(s)];
+                if (d) l.pos = l.pos + *d, l.test = l.test + *d;
+            }
+    };
+    move({&head}, head_spots);
+    move({&tail, &brake}, rear_spots);
+}
+
 void CarLampGlows::load(SDL_Renderer* r, render::GpuContext* gpu, ByteSpan env, ByteSpan flare) {
     active_ = false;
     if (env.size() < 0xA1C || std::memcmp(env.data(), "Env0", 4) != 0 || !(rd32(env, 0x10) & 0x8000)) return;

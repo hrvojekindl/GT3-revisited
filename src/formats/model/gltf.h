@@ -35,4 +35,14 @@ struct GlbOptions {
 // enabled. Throws FormatError on malformed files.
 scene::Model load_glb(ByteSpan file, const GlbOptions& opt = {}, const std::string& name = {});
 
+// Where a body's own lamps are, in load_glb's frame: the middle of the box round the head lamps'
+// vertices (head, lamp, light) and round the rear lamps' (brake, tail) on each side, [0] the
+// car's left (x < 0), [1] its right; empty where it has none. The race puts the car file's lamp
+// glows there (race::CarLampSet::move_onto). Throws as load_glb.
+struct GlbLamps {
+    using Spot = std::optional<std::array<float, 3>>;
+    std::array<Spot, 2> head, rear;
+};
+GlbLamps glb_lamps(ByteSpan file);
+
 } // namespace gt3r
