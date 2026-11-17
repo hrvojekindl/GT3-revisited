@@ -219,8 +219,9 @@ models) and `gt3tool course-obj <iso> <vol-path> <outdir> glb`.
 is a complete car mod to copy: a car file with a comment on every value, its own
 glTF body with materials named for the loader, a new maker with a dealer, dealer
 pictures rendered with the game, the scripts that prepared the model, and the
-`gt3tool modcar` results it was tuned to. Copy it into your mods folder to try it,
-then rename it and change it into your own car.
+`gt3tool modcar` results it was tuned to. Its second car,
+`cars/gt3r_concept_coupe_e_24.ini`, is the same body as an electric car. Copy it into
+your mods folder to try it, then rename it and change it into your own car.
 
 A mod can add new cars as small text files in `mods/<id>/cars/<label>.ini`.
 A car file contains only your own numbers (dimensions, weight, power, gearing,
@@ -386,7 +387,9 @@ GT3 has no electric cars, so `type = electric` switches on a few additions. Disc
 cars never use them. The race runs GT3's own physics step, and an electric car
 takes a path of its own through its engine, clutch and gearbox steps
 (`ElectricDrive` in `src/sim/exact/car_record.h`, `tick_engine.cpp`); every other
-part of the step (tyres, suspension, aids, the AI) is GT3's.
+part of the step (tyres, suspension, aids, the AI) is GT3's. The example mod's
+Concept Coupe E (`examples/mods/example_coupe/cars/gt3r_concept_coupe_e_24.ini`) is a
+complete electric car to start from.
 
 - **Drive:** the motor drives the wheels directly through a single reduction.
   There is no idle, no clutch slip and no gear changes, and full torque is
@@ -432,8 +435,8 @@ resulting specs and test-drives the car on the game's own physics, on the
 machine tests' course: 0-60 mph (standing start and with a 1 ft rollout, like
 US magazine tests), 0-100 km/h, the quarter mile, top speed (GT3's top-speed
 test, driven by the race's AI), 60-0 mph braking and lift-off deceleration,
-each next to your `[reference]` figures. `disc:<label>` arguments run disc cars through the same
-test for comparison. Fit `power_kw` to the quarter-mile trap
+each next to your `[reference]` figures. `disc:<label>` arguments run disc cars
+through the same test for comparison. Fit `power_kw` to the quarter-mile trap
 speed (top end) first, then `output_pct` to 0-60. GT3's physics loses a little
 at speed (the disc Viper
 traps ~5 mph under its magazine tests), so the curve power often ends up

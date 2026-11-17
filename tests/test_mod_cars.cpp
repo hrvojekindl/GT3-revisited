@@ -247,9 +247,17 @@ TEST(modcar_texts_game_text) {
     if (!c || !m) return;
     CHECK(c->name == "Caf\x81\xE9 \x80\x92 Racer"); // é Latin-1, ’ the Latin font's (Windows-1252) code
     CHECK(c->latin_name == c->name);
-    // One name: a blank second name, so the results and records show it once.
+    // One name: a blank second name, so the results and records show it once. The same in every language's fields
+    // (car_name_fields: US +0xE4 / +0xE6, Japanese +0xF2 / +0xF4, British English +0x100 / +0x102).
     CHECK(c->name_alt.find_first_not_of(' ') == std::string::npos);
     CHECK(race::result_car_name(*db, "syn_mod", true) == c->latin_name);
+    const ByteSpan* r = db->record(data::TableId::Car, "syn_mod");
+    CHECK(r != nullptr);
+    if (r) {
+        auto text = [&](size_t o) { return db->unistrings().at(rd16(*r, o)); };
+        for (size_t o : {0xE4, 0xF2, 0x100}) CHECK(text(o) == c->name);
+        for (size_t o : {0xE6, 0xF4, 0x102}) CHECK(text(o).find_first_not_of(' ') == std::string::npos);
+    }
     CHECK(c->maker == disc_maker && c->maker_id == 77); // the disc's maker found
     CHECK(m->description == "Tr\x81\xE8s vite");
     CHECK(m->paints.size() == 1 && m->paints[0].first == "Bleu \x81\xC9lectrique");
@@ -974,6 +982,53 @@ TEST(example_mod_car) {
     std::printf("    %s: %.0f km/h at 8 s, %.0f km/h at 20 s\n", label.c_str(), v[0], v[1]);
     CHECK(v[0] > 100);
     CHECK(v[1] > 180 && v[1] < 290);
+}
+
+// The example's electric car: the same body on its own motor (docs/MODDING.md "Electric cars").
+TEST(example_mod_car_electric) {
+    Disc* disc = test_disc();
+    if (!disc) SKIP("GT3R_DISC not set");
+    const std::string dir = std::string(GT3R_SOURCE_DIR) + "/examples/mods/example_coupe";
+    const std::string coupe = "gt3r_concept_coupe_24", label = "gt3r_concept_coupe_e_24";
+    data::CarDatabase db;
+    CHECK(db.load(disc->volume()));
+
+    auto text = read_host_file(dir + "/cars/" + label + ".ini");
+    CHECK(text.has_value());
+    if (!text) return;
+    std::string err;
+    std::vector<std::string> warns;
+    auto def = data::parse_mod_car(std::string_view(reinterpret_cast<const char*>(text->data()), text->size()), &err, &warns);
+    CHECK(def.has_value() && warns.empty() && def->electric);
+
+    data::load_mod_maker_file(db, dir + "/makers/gt3r.ini", "example_coupe");
+    data::load_mod_car_files(db, {dir + "/cars/" + coupe + ".ini", dir + "/cars/" + label + ".ini"}, "example_coupe");
+    db.rebuild();
+    CHECK(db.mod_car_errors().empty());
+    const data::ModCar* m = db.mod_car(label);
+    const data::ModCar* c = db.mod_car(coupe);
+    CHECK(m && c && m->electric && !c->electric && m->model_file == c->model_file);
+    if (!m) return;
+    CHECK(m->for_sale && !m->picture.empty() && !m->thumb.empty());
+    for (const std::string* png : {&m->picture, &m->thumb}) {
+        auto b = read_host_file(*png);
+        CHECK(b.has_value());
+        if (b) {
+            PngImage img = decode_png(*b);
+            CHECK((img.width == 640 && img.height == 448) || (img.width == 51 && img.height == 27));
+        }
+    }
+
+    // It races on its own motor: the electric drive is on, it passes 100 km/h well before the coupe does (3.8 s in
+    // gt3tool modcar), and its motors' top speed holds it at 250 km/h.
+    std::optional<sim::exact::Equipment> eq = race::exact_equipment(db, {label});
+    CHECK(eq.has_value() && sim::exact::electric_drive(&db, *eq).on);
+    const std::vector<float> v = straight_kmh(*disc, db, label, {4.5, 30.0});
+    CHECK(v.size() == 2);
+    if (v.size() < 2) return;
+    std::printf("    %s: %.0f km/h at 4.5 s, %.0f km/h at 30 s\n", label.c_str(), v[0], v[1]);
+    CHECK(v[0] > 100);
+    CHECK(v[1] > 235 && v[1] < 252);
 }
 
 // --- a mod car races the same from its arcade record as from its own parts ----------
