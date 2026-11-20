@@ -120,7 +120,7 @@ public:
         if (!flow_) {
             ui.header("CAR SETTINGS", "");
             ui.text(8, 40, error_.empty() ? "loading..." : error_, colors::kBad);
-            ui.footer("Triangle: back");
+            ui.footer("{Triangle}: back");
             return;
         }
         draw_frame(app);
@@ -190,7 +190,7 @@ private:
             flow_->measure_text = font_measure(fonts_);
             if (shows) flow_->start_presentations();
             else if (round_) flow_->start_save_game();
-            else flow_->start(set_, page_);
+            else flow_->start(set_, set_ == "setting" ? game::setting_start_page() : page_);
         } catch (const std::exception& e) {
             error_ = e.what();
             flow_.reset();
@@ -253,6 +253,7 @@ private:
         renderer_->draw_elements(flow_->draw_list(), ro, SDL_FRect{0, 0, kMenuWidth, kMenuHeight});
         canvas_.end(r);
         SDL_SetRenderTarget(r, prev);
+        if (const menu::flow::GtModeWidgetRelease& trim = menu::flow::gt_mode_widget_trim()) trim(app);
     }
 
     std::string set_, page_, event_, last_page_;

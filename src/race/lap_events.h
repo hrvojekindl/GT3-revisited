@@ -51,6 +51,12 @@ LapEventRules lap_event_rules(HudRun run, HudPlay play);
 // the cameras follow (`followed`, as the car ids: -1 the player, >= 0 an opponent), on the
 // single view (presentation §D6, §G3).
 int event_display_of(int car, HudPlay play, int followed);
+// The lap-time list (the HUD's Last and lap-time list, presentation §D4) a car's lap goes to: 0
+// the single view's or player 1's, 1 player 2's, -1 none. The race display's ring takes the lap
+// times of the car it follows: live, each player's own car; in a replay the car the cameras
+// follow at that moment, so a switch keeps the laps posted before it (presentation §D9).
+// Player 2's list keeps that player's car.
+int lap_list_of(int car, HudPlay play, int followed);
 
 // Race gaps: who passed each timing point first on the lead lap.
 class PassingOrder {
@@ -110,7 +116,8 @@ std::string split_text(int number, long long ms);
 int license_split_number(bool line, int lap, int point, int points);
 // '+' and the time for a gap >= 0, the font's dash glyph (0x7F) for < 0.
 std::string gap_text(long long gap_ms);
-// '+' (dash glyph when negative) and `format` ("%d Laps") with |laps|.
+// '+' (dash glyph when negative) and `format` ("%d Laps") with |laps| (a format without "%d", as PAL's texts are: the
+// text alone, as the program's sprintf prints it).
 std::string lap_diff_text(int laps, const std::string& format);
 
 // The event display: eight message slots and two timers, the end of the queue and the start

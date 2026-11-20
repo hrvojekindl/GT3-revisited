@@ -77,6 +77,8 @@ void RaceScreen::start(App& app, const Replay* replay) {
         course_bytes_ = course;
         car_ = car_setup_from_database(db_, ca.label);
         if (replay && !replay->car_model.empty()) launch_model_ = replay->car_model;
+        // ... and its fitted wheels (issue 347: the theater's launch has no garage car, so its stock rims were drawn).
+        if (replay && !replay->wheel.empty()) launch_.request.car_wheel = replay->wheel;
         std::string model = launch_model_.empty() ? ca.model : launch_model_;
         std::optional<Bytes> car_file = read_car(app, model);
         if (!car_file || car_file->empty()) throw FormatError("car model cars/day/" + model + " is missing or empty");
@@ -128,7 +130,8 @@ void RaceScreen::start(App& app, const Replay* replay) {
             race_opponent_paints_ = replay->opponent_paints;
             if (!replay->car2.empty()) two_player_ = true, preset_.car2 = replay->car2;
         }
-        race_mode_ = two_player_ || !race_event_.empty() || !race_opponents_.empty() || online_;
+        // (The pace-car test is a licence run, a solo mode with one computer car.)
+        race_mode_ = two_player_ || !race_event_.empty() || (!race_opponents_.empty() && !pace_car_) || online_;
         if (!build_vehicle(app)) throw FormatError(error_);
         build_tv_cameras();
         gtrc_.reset();
@@ -164,6 +167,7 @@ void RaceScreen::start(App& app, const Replay* replay) {
             point_lights_.load(cf.section(*course, course::kSlotRoad)); // night lamp list (point-light courses)
             if (app.gpu()) smoke_.load(*app.gpu(), cf.section(*course, 32), cf.section(*course, 26)); // tyre smoke / dust
             if (app.gpu() && !sparks_.loaded()) sparks_.load(*app.gpu(), *app.vfs()); // the sparks' glow (race/particle.img)
+            if (app.gpu() && !leaves_.loaded()) leaves_.load(*app.gpu(), *app.vfs()); // a later build's leaves (the same image)
             spark_shot_.reset();
             pylons_.load(app.gpu(), *course); // pylons / cones (GTRW list + slot 36 types)
             if (sun_.params().has_shadow) pylons_.set_shadow(sun_.params().shadow_rgb, sun_.params().shadow_alpha);
@@ -219,6 +223,12 @@ void RaceScreen::start(App& app, const Replay* replay) {
     if (!hud_loaded_) {
         hud_.load(*app.vfs(), app.renderer(), lang_);
         hud_loaded_ = true;
+        // A Gran Turismo Concept disc's display rows are its own tables' (concept §9.3); GT3's are built in.
+        race::clear_hud_tables();
+        if (app.vfs()->region().game == GameKind::Concept) {
+            const std::optional<Bytes> modes = app.vfs()->read("database/racemode.db"), rows = app.vfs()->read("database/racedetail.db");
+            if (!modes || !rows || !race::set_hud_tables(*modes, *rows)) LOG_WARN("Race: the disc's display tables could not be read");
+        }
     }
     engine_.stop(app.audio().voices());
     std::string err;
@@ -305,7 +315,7 @@ void RaceScreen::start(App& app, const Replay* replay) {
     director_.set_view_mode(view_settings().mode);
     update_race_camera(PadState{}, 1.0 / 60.0);
     if (field_ && field_->has_second()) {
-        bind_hood(camera2_, hood_bound2_, car2_visual_ ? car2_visual_.get() : car_visual_.get());
+        bind_camera_car(camera2_, camera2_car_, car2_visual_ ? car2_visual_.get() : car_visual_.get());
         camera2_.set_track_distance(track_->distance_of(render_state2_.position));
         camera2_.set_lap(field_->second_laps().laps);
         camera2_.snap(render_state2_);
@@ -318,7 +328,7 @@ void RaceScreen::start(App& app, const Replay* replay) {
     if (preset_.ritems >= 0 && (replaying_ || demo_)) replay_settings_.items = u8(preset_.ritems); // (not stored)
     if (preset_.rcam >= 0 && replaying_) { // screenshots: a player view in the replay (2: the in-car view)
         camera_.set_mode(CameraMode(std::clamp(preset_.rcam, 0, int(CameraMode::Count) - 1)));
-        bind_hood(camera_, hood_bound_, car_visual_.get());
+        bind_camera_car(camera_, camera_car_, car_visual_.get());
         camera_.snap(render_state_);
         camera_.update(render_state_, vehicle_->setup(), PadState{}, 1.0 / 60.0);
     }
@@ -468,6 +478,7 @@ void RaceScreen::restart() {
     replaying_ = false;
     run_recorded_ = false;
     retry_locked_ = false; // every run starts with RETRY available (presentation §E3)
+    pod_intro_posted_ = false;
     result_latch_.reset(); // a new live run
     latched_rows_.reset();
     run_replay_.reset();
@@ -545,9 +556,11 @@ ExactFieldOptions RaceScreen::exact_options(App& app) {
     ExactFieldOptions o;
     o.data = exact_data_;
     // The disc's own release's rules for the player's races; the game's demos (the attract demo, the quick menu's and the
-    // theater's demonstrations, the licence preview) and online races (every client shares one physics, docs/dev/ONLINE.md)
-    // NTSC-U's on every disc.
-    if (attract_ || demo_ || preview_ || !theater_demo_.empty() || online_) o.rules = sim::Program::NtscU;
+    // theater's demonstrations, the licence preview) NTSC-U's on every disc; online races (every client shares one
+    // physics, docs/dev/ONLINE.md) NTSC-U's on GT3's discs and a Gran Turismo Concept disc's own (race::online_rules).
+    // (The licence menu's box replaying the player's own run, run_preview_, plays that run's record as any replay.)
+    if (attract_ || demo_ || (preview_ && !run_preview_) || !theater_demo_.empty()) o.rules = sim::Program::NtscU;
+    else if (online_) o.rules = exact_data_ ? race::online_rules(*exact_data_) : std::optional(sim::Program::NtscU);
     o.course_file = course_bytes_;
     o.course = courses_[size_t(course_sel_)].label;
     o.player.car = launch_source_.value_or(ExactCarSource{cars_[size_t(car_sel_)].label});
@@ -646,6 +659,7 @@ bool RaceScreen::build_vehicle(App& app) {
             o.second.pedal_style = manual2_ == 1 ? 1 : 0;
             o.second.wheel = app.input().wheel_steering(1);
             o.second.asm_on = o.player.asm_on, o.second.tcs_on = o.player.tcs_on;
+            if (assist2_ >= 0 && aids_options_apply_) o.second.asm_on = assist2_ == 0, o.second.tcs_on = assist2_ <= 1;
         }
         cfg.exact = std::move(o);
         std::string err;
@@ -665,7 +679,7 @@ bool RaceScreen::build_vehicle(App& app) {
             track_->set_lap_source(exact_lap_source(*field_)); // the exact core times the player's laps itself
             if (1.0 / step_.step() != field_->tick_hz()) step_ = FixedStep(field_->tick_hz()); // (PAL: 50 a second)
             car2_visual_.reset();
-            hood_bound2_.reset();
+            camera2_car_.reset();
             // Player 2's car as the battle has it (a garage car: its own model and bought wheels).
             const int paint2 = battle_.paint2;
             std::string car2 = preset_.car2.empty() ? car_.label : preset_.car2;
@@ -722,8 +736,8 @@ void RaceScreen::build_player_visual(App& app, const std::string& model, ByteSpa
                                               showroom.car_span(), showroom.wheel_span(), showroom.stand_in);
     car_visual_->set_full_detail(full_car_detail_);
     if (brake_parts_) car_visual_->set_brake_parts(*brake_parts_);
-    hood_bound_.reset();
-    hood_bound2_.reset();
+    camera_car_.reset();
+    camera2_car_.reset();
     // The driver's side ([vr] seat_side = car): the seat the body's own driver sits in, else the
     // side of the maker's country; a mod car's own word first (CarDatabase::driver_side).
     const DriverSeat& seat = car_visual_->driver_seat();
@@ -732,22 +746,24 @@ void RaceScreen::build_player_visual(App& app, const std::string& model, ByteSpa
     const data::Car* driven = db_.car(car_.label);
     const data::DriverSide side = driven ? db_.driver_side(*driven, body) : body;
     driver_side_ = side == data::DriverSide::Left ? -1 : side == data::DriverSide::Right ? 1 : 0;
-    LOG_INFO("Race: %s, its driver %s (the body: left %.2f, right %.2f m2%s)", car_.label.c_str(),
+    LOG_INFO("Race: %s%s%s, its driver %s (the body: left %.2f, right %.2f m2%s)", car_.label.c_str(),
+             wheel_file ? " on wheels " : "", wheel_file ? wheel_label.c_str() : "",
              driver_side_ < 0 ? "on the left" : driver_side_ > 0 ? "on the right" : "in the middle (nothing says)", double(seat.left),
              double(seat.right), seat.side ? "" : ", no side");
 }
 
-void RaceScreen::bind_hood(CameraRig& cam, std::optional<const CarVisual*>& bound, const CarVisual* v) {
+void RaceScreen::bind_camera_car(CameraRig& cam, std::optional<const CarVisual*>& bound, const CarVisual* v) {
     if (bound && *bound == v) return;
     bound = v;
     cam.set_hood_profile(v ? v->hood_profile() : HoodCameraProfile{});
+    if (v) cam.set_car_mounts(v->mounts()); // the driver's eye and the chase point of that car (issue 249)
 }
 
 // The opponents' cars as drawn and heard (a race's field, a free practice's): their paints (the event's entry ids, else the
 // game's draw), models and engine notes.
 void RaceScreen::load_opponent_cars(App& app, const RaceField& f) {
     opp_visuals_.clear();
-    hood_bound_.reset();
+    camera_car_.reset();
     // Paint colours: player first, then the opponents (event entry ids or the game's draw). The attract demo's race has no
     // player car: its slot-0 car is drawn like the others when its entry gives no paint.
     std::vector<PaintEntry> entries;
@@ -877,6 +893,7 @@ void RaceScreen::reset_run_state() {
     machine_time_ = -1, top_speed_kmh_ = 0, hud_top_kmh_ = 0;
     if (machine_) machine_->reset();
     tt_failed_ = false;
+    pod_dq_t_ = {-1.0, -1.0};
     tt_hold_ = solo_field_ ? std::max(0.0, -solo_field_->race_time()) : 0; // (the race holds the car itself)
     // The course's animations restart with every run; the start-signal lights follow the
     // countdown (none for rolling and flying starts).
@@ -908,6 +925,8 @@ void RaceScreen::reset_run_state() {
     finish_position_ = 0;
     lap_times_.clear();
     odometer_m_ = 0;
+    opp_trip_m_.clear();
+    opp_top_kmh_.clear();
     smoke_.clear();
     // The heat haze lenses as the original's race set-up leaves them (every run, replay and
     // demonstration; presentation §L6).

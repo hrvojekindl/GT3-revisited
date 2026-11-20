@@ -70,6 +70,19 @@ RacePhysics race_physics(const ex::ProgramData& d) {
     return {RaceCore::Gt3, d.known()};
 }
 
+std::optional<sim::Program> online_rules(const ex::ProgramData& d) {
+    if (sim::concept_program(d.program())) return std::nullopt;
+    return sim::Program::NtscU;
+}
+
+ex::ProgramData online_program_data(const ex::ProgramData& d) {
+    const std::optional<sim::Program> rules = online_rules(d);
+    if (!rules) return d;
+    ex::ProgramData out = d.gt3_tables();
+    out.set_behaviour({*rules, 60});
+    return out;
+}
+
 const char* race_core_name(RaceCore c) {
     switch (c) {
     case RaceCore::Gt3: break;
@@ -111,7 +124,14 @@ std::optional<ex::Equipment> exact_equipment(const data::CarDatabase& db, const 
             if (error) *error = "unknown car " + label;
             return std::nullopt;
         }
-        if (src.settings) return ex::make_equipment(db, base, *src.parts, *src.settings);
+        if (src.settings) {
+            ex::Equipment eq = ex::make_equipment(db, base, *src.parts, *src.settings);
+            // A garage car made from an arcade row (Gran Turismo Concept keeps one per class entry, concept §10) carries
+            // the row's engine output factor (the row's +0x10A, EQ +0x1B8), which the settings do not hold.
+            for (const data::CarVariant& a : db.arcade_cars())
+                if (a.label == label && a.bytes.size() >= 0x10C) eq.setting[(0x1B8 - 0xF0) / 4] = rd16(a.bytes, 0x10A);
+            return eq;
+        }
         return ex::stock_equipment(db, base, *src.parts);
     }
     // As the race entries are built: an event's entry (table 31) from its record, as the race information builds it;
@@ -144,7 +164,12 @@ ExactCarSource exact_online_source(const data::CarDatabase& db, const game::Onli
         return {c.car, c.parts, c.settings};
     }
     if (c.kind == K::Arcade)
-        if (std::optional<ArcadeCar> ac = arcade_car(db, c.arcade, 0, course)) return {ac->label, std::nullopt, std::nullopt, ac->stage};
+        if (std::optional<ArcadeCar> ac = arcade_car_on(db, c.arcade, c.tires >= 0 ? c.tires : 10, course))
+            return {ac->label, std::nullopt, std::nullopt, ac->stage};
+    // A disc or mod car with the lobby's tires or settings: its parts with those tires, and those settings.
+    if (c.tires >= 0 || c.tune)
+        if (std::optional<std::array<u64, 27>> parts = game::online_car_parts(db, c))
+            if (std::optional<sim::CarSettings> settings = game::online_car_settings(db, c)) return {c.car, parts, settings};
     ExactCarSource s;
     s.label = c.car;
     return s;

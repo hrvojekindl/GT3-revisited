@@ -63,8 +63,8 @@ Testing variables (in the environment, or --env NAME=value):
  Races (docs/dev/RACE.md)
   GT3R_RACE=<key=value,...>    --screen race, e.g. course=trialmt,car=r34_gtr_v_99,auto=1,cam=2
                                course car paint cam auto mt event tt_event laps p2 car2 split
-                               warp quit leave replay watch rwarp save hud perf ghost music
-                               pause script ... (all keys: read_preset, screen_race_launch.cpp)
+                               warp quit leave place replay watch rwarp save hud perf ghost music
+                               pause script line ... (all keys: read_preset, screen_race_launch.cpp)
   GT3R_RACE_DEBUG=1            log vehicle telemetry twice a second
   GT3R_RACE_TRACE=<file>       one line per race step with the player's car (live vs replay)
   GT3R_EXACT_DEBUG=1           log every car of the exact race core every 2 s
@@ -76,6 +76,7 @@ Testing variables (in the environment, or --env NAME=value):
  Menus and GT Mode (docs/dev/GT_MODE.md, docs/behaviour/menus.md)
   GT3R_GT3MENU_SCRIPT=<keys>   --screen gt3menu keys, split by ',': up down left right cross
                                circle square triangle start select wait:<frames>
+                               p2:<key> (player 2's key)
   GT3R_GT3MENU_OPEN=<set>:<page>  open a page of the game's menus directly
   GT3R_GT3MENU_FREEZE=1        stop the menu clock after the script
   GT3R_GT3MENU_DEBUG=1         the menu debug overlay
@@ -106,6 +107,7 @@ Testing variables (in the environment, or --env NAME=value):
 
  Rendering and timing (docs/dev/RENDERING.md, docs/dev/VR.md)
   GT3R_HITCH=<ms>              log every frame longer than this, with its parts
+  GT3R_CRASH_TEST=<kind>       close at startup as a bug would (throw, segv, abort): the log's last line
   GT3R_DYN_CYCLE=<s>           sweep the dynamic resolution every s seconds
   GT3R_DIRECT=1                macOS: let fullscreen go direct-to-display
   GT3R_VR_EYE_SIZE=<px>        VR: the eye image size

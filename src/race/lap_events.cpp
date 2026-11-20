@@ -46,6 +46,12 @@ int event_display_of(int car, HudPlay play, int followed) {
     return car == -1 ? 0 : car == -2 ? 1 : -1;
 }
 
+int lap_list_of(int car, HudPlay play, int followed) {
+    if (car == -2) return 1;
+    if (play == HudPlay::Replay) return car == followed ? 0 : -1;
+    return car == -1 ? 0 : -1;
+}
+
 // --- race gaps --------------------------------------------------------------------------------
 
 void PassingOrder::reset() { points_ = {}; }
@@ -138,11 +144,9 @@ std::string gap_text(long long gap_ms) {
 }
 
 std::string lap_diff_text(int laps, const std::string& format) {
+    // The text is the program's format (sprintf): without a "%d" (PAL's "Laps", "Tours", ...) the count is not shown.
     std::string s = format;
-    size_t at = s.find("%d");
-    std::string n = std::to_string(std::abs(laps));
-    if (at != std::string::npos) s.replace(at, 2, n);
-    else s = n + " " + s;
+    if (const size_t at = s.find("%d"); at != std::string::npos) s.replace(at, 2, std::to_string(std::abs(laps)));
     return std::string(1, laps >= 0 ? '+' : kDash) + s;
 }
 

@@ -176,10 +176,12 @@ beside it instead. Saves and replays can go in another folder of your choice
 | `music_playlist.txt` | your songs' playlist (their order and check marks) |
 | `music_songs.txt` | your songs as the last scan found them, and how loud each is (so the next start has them at once) |
 | `screenshots/` | F12 screenshots |
+| `gt3r.log` | this session's log, for bug reports (Settings → Disc & saves → **Show the log**); after a crash it ends with why the game closed. Your home folder shows as `~` and your user name as `<user>`; it stops at a few MB |
+| `gt3r.prev.log` | the session before this one's log (the one that crashed, once you start the game again) |
 
 ### Your music
 
-Your own MP3, FLAC and WAV files can play as race songs: choose their folder
+Your own MP3, FLAC, WAV and Ogg files can play as race songs: choose their folder
 in **Settings → Audio → Music folder** (or copy them into `music/`) and they
 play in place of the disc's. The **Both** and **Original** tabs in the game's
 **Options → Favorite Music List** mix them with the disc's or go back to it. In
@@ -289,8 +291,10 @@ edited one imports like any other save. Home → Trade and the arcade's Load Gar
 friend's save the same way. Each release of the original reads only its own
 save, and saves go to and from your disc's: `BASCUS-97102GAMEDATA` (NTSC-U,
 both discs), `BESCES-50294GAMEDATA` (PAL) or `BISCPS-15009GAMEDATA`
-(NTSC-J). `gt3tool` converts on the command line too (it needs your disc for
-the game data):
+(NTSC-J). A Gran Turismo Concept disc's saves work the same way, under that
+release's own name (`BESCES-50858GAMEDATA` for the European Tokyo-Geneva; the
+others are in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)). `gt3tool`
+converts on the command line too (it needs your disc for the game data):
 
 ```text
 gt3tool save-import <iso> <ps2 save> <saves folder>/name.sav
@@ -336,8 +340,13 @@ players, each on their own machine:
   class lists' cars (raced as the arcade does), and every other car by its weight
   per power, as GT3 classes garage cars.
 - The host's **Car rules** limit the cars: class, production or race cars,
-  drivetrain, NA or turbo, stock cars only, a power limit, mod cars. The car
-  page can list only the cars allowed.
+  drivetrain, NA or turbo, stock cars only, stock settings only, which tires, a
+  power limit, mod cars. The car page can list only the cars allowed. The host can also turn on
+  **Tire wear**.
+- Each player chooses their car's **Tires** (the sets the tune shop sells for it;
+  an arcade car's racing or drift tires too) and can change its **Settings** in
+  the lobby, within the ranges its parts allow, as in GT Mode's settings menu.
+  The lobby remembers them per car; a GT Mode garage car keeps its own.
 - A GT Mode car races only with parts and settings the game's tune shop and
   settings menu can give it; any other setup (an edited save, say) is refused.
 - **Stability control (ASM)** and **Traction control (TCS)** are your own
@@ -346,6 +355,11 @@ players, each on their own machine:
   everywhere.
 - Every lobby page works with a mouse, touch or a VR controller's pointer too.
 - Mod cars are offered to the other players as checked downloads.
+- Players on any Gran Turismo 3 release (NTSC-U, PAL or NTSC-J) race together.
+  Any other disc, such as a Gran Turismo Concept release or a modified copy,
+  races only against the same disc: the host turns other players away and
+  names both discs. A Gran Turismo Concept disc races online on its own
+  physics.
 - The other players can see your IP address, as in any peer-to-peer game.
 - **Updates.** At startup the game asks the relay server whether a newer
   version exists. That is one small message with the game's version and
@@ -533,11 +547,18 @@ original program's code in any form.
   ([third_party/fonts/barlow/OFL.txt](third_party/fonts/barlow/OFL.txt)).
   It is compiled into the executable; the game's menus use the fonts from
   your disc.
+- [PromptFont](https://shinmera.com/promptfont) v1.10 by Yukari "Shinmera"
+  Hafner (based on Xolonium by Severin Meyer), the controller and keyboard
+  button icons on our own screens: Copyright 2018-2023 Yukari Hafner, SIL Open
+  Font License 1.1
+  ([third_party/fonts/promptfont/OFL.txt](third_party/fonts/promptfont/OFL.txt)).
+  It is compiled into the executable.
 - [stb_truetype](https://github.com/nothings/stb) v1.26 by Sean Barrett,
-  public domain (or MIT), rasterises that font.
+  public domain (or MIT), rasterises these fonts.
 - [dr_mp3, dr_flac and dr_wav](https://github.com/mackron/dr_libs) by David
-  Reid, public domain (or MIT-0), decode your own music
-  ([third_party/dr_libs](third_party/dr_libs)).
+  Reid, public domain (or MIT-0), and [stb_vorbis](https://github.com/nothings/stb)
+  v1.24 by Sean Barrett, public domain (or MIT), decode your own music and mods'
+  ([third_party/dr_libs](third_party/dr_libs), [third_party/stb](third_party/stb)).
 - [SDL 3](https://libsdl.org) and [zlib](https://zlib.net), zlib License,
   fetched at build time (Windows builds ship `SDL3.dll`).
 - [libchdr](https://github.com/rtissera/libchdr) v0.3.0, BSD 3-Clause, reads

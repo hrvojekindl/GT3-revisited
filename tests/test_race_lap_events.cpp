@@ -54,6 +54,8 @@ TEST(race_lap_event_texts) {
     CHECK(gap_text(-456) == "\x7F" "0'00.456"); // the font's dash glyph for a lead
     CHECK(lap_diff_text(1, "%d Laps") == "+1 Laps");
     CHECK(lap_diff_text(3, "%d Laps") == "+3 Laps");
+    CHECK(lap_diff_text(2, "Tours") == "+Tours"); // (PAL's texts have no "%d": the program prints the word alone)
+    CHECK(lap_diff_text(-1, "%d Laps") == "\x7F" "1 Laps");
 }
 
 // A licence test's splits count on over its laps, the line as each lap's last timing point (the licence conductor's
@@ -551,6 +553,16 @@ TEST(race_replay_lap_event_rules) {
     for (HudRun run : {HudRun::Race, HudRun::TimeTrial, HudRun::FreeRun, HudRun::FreePractice, HudRun::License,
                        HudRun::MachineTime, HudRun::MachineSpeed, HudRun::Battle})
         CHECK(none(lap_event_rules(run, HudPlay::Demo)));
+}
+
+TEST(race_replay_followed_car_lap_list) {
+    // presentation §D9: the lap-time list takes the laps of the car the display follows: live
+    // the players' own cars, in a replay the followed car at that moment; player 2's list keeps
+    // that player's car.
+    CHECK(lap_list_of(-1, HudPlay::Live, 3) == 0 && lap_list_of(-2, HudPlay::Live, 3) == 1 && lap_list_of(3, HudPlay::Live, 3) == -1);
+    CHECK(lap_list_of(3, HudPlay::Replay, 3) == 0 && lap_list_of(-1, HudPlay::Replay, 3) == -1);
+    CHECK(lap_list_of(-1, HudPlay::Replay, -1) == 0 && lap_list_of(2, HudPlay::Replay, -1) == -1);
+    CHECK(lap_list_of(-2, HudPlay::Replay, -1) == 1);
 }
 
 TEST(race_replay_followed_car_events) {

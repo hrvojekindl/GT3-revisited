@@ -202,6 +202,42 @@ TEST(race_camera_views) {
     CHECK(g.mode() == CameraMode::Bumper);
 }
 
+// The driver's camera sits at the points of the car it is on (issue 249): GT3's on-board camera
+// reads the GTCI table of its own car, so a replay's or the Preview's driver's view on an
+// opponent takes that car's in-car eye (mount 0) and chase point (mount 1), not the player's.
+// A car without two mounts gets GT3's fallbacks.
+TEST(race_camera_car_mounts) {
+    sim::VehicleSetup setup;
+    sim::VehicleState s; // at the origin facing -z
+    const float q = setup.wheels[0].ride_height > 0 ? setup.wheels[0].ride_height : 0.13f;
+    auto eye = [&](CameraRig& c, CameraMode m) {
+        c.set_mode(m);
+        c.update(s, setup, PadState{}, 1.0 / 60.0);
+        return c.eye();
+    };
+    auto mount = [](float y, float z) {
+        CarMount m;
+        m.pos = {0, y, z};
+        return m;
+    };
+    CameraRig c;
+    c.set_car_mounts({mount(-0.97f, 0.11f), mount(-1.5f, -6.0f)}); // the player's car
+    render::Vec3 e = eye(c, CameraMode::Bumper);
+    CHECK(near(e.y, q + 0.97f) && near(e.z, -0.11f));
+    CHECK(near(c.driver_eye().y, 0.97f));
+    c.set_car_mounts({mount(-1.24f, 0.32f), mount(-1.8f, -6.5f), mount(0.4f, 1.0f)}); // an opponent's
+    e = eye(c, CameraMode::Bumper);
+    CHECK(near(e.y, q + 1.24f) && near(e.z, -0.32f));
+    CHECK(near(c.driver_eye().y, 1.24f) && near(c.driver_eye().z, -0.32f)); // (custom cameras measure from it)
+    e = eye(c, CameraMode::Chase);
+    CHECK(near(e.y, q + 1.8f) && near(e.z, 6.5f));
+    c.set_car_mounts({mount(-1.0f, 0.0f)}); // one mount: GT3's fallbacks
+    e = eye(c, CameraMode::Bumper);
+    CHECK(near(e.y, q + 0.8f) && near(e.z, 0.0f));
+    e = eye(c, CameraMode::Chase);
+    CHECK(near(e.y, q + 1.5f) && near(e.z, 6.0f));
+}
+
 // The race sounds' view of the camera (issue 222): the in-car views are car-mounted, the chase views
 // chase, every other camera (and the pre-race shot) other; each car's view by whether it is the
 // camera's target. The eye's velocity is the listener's motion, restarted at a cut.
@@ -1665,6 +1701,23 @@ TEST(race_hud_speed_lines) {
     CHECK(Hud::speed_text(1200.0f, false) == "999.9");
 }
 
+TEST(race_hud_layout_logger) {
+    // The Analyzer's REPLAY display (racemode 15, LOGGER): GT3's four rows at the frame's left (the second track's car is
+    // drawn 560 to the right), the pedals' brake gauge at x, the accel gauge its width on, the gear's sub 1 pens.
+    clear_hud_tables();
+    CHECK(hud_layout(HudMode::Logger).size() == 4);
+    const HudRow* st = hud_row(HudMode::Logger, HudPart::Steering, -1, 1);
+    CHECK(st && st->x == 42 && st->y == 70 && st->valign == 1);
+    const HudRow* tach = hud_row(HudMode::Logger, HudPart::BarTach, -1, 0);
+    CHECK(tach && tach->x == 24 && tach->y == 200 && tach->w == 48 && tach->h == 25);
+    const HudRow* ab = hud_row(HudMode::Logger, HudPart::AccelBrake, 0, 1);
+    CHECK(ab && ab->x == 24 && ab->y == 150 && ab->w == 20);
+    CHECK(!hud_row(HudMode::Logger, HudPart::AccelBrake, 1, 1)); // (Concept's store monitor row)
+    const HudRow* g = hud_row(HudMode::Logger, HudPart::Gear, -1, 1);
+    CHECK(g && g->sub == 1 && g->x == 44 && g->y == 180);
+    CHECK(!hud_row(HudMode::Logger, HudPart::DigitalSpeed, -1, 1));
+}
+
 TEST(race_hud_layout_disc) {
     // presentation §D4: our HUD layout table is the disc's (database/racemode.db: a mode
     // number and 32 racedetail ids; racedetail.db: id, part, sub, then valign at +0x0C,
@@ -1680,7 +1733,8 @@ TEST(race_hud_layout_disc) {
     const u64 none = db::id_hash("(Null)");
     const HudMode ours[] = {HudMode::Race,         HudMode::Endurance, HudMode::License, HudMode::MachineTime,
                             HudMode::FreeRun,      HudMode::Battle,    HudMode::BattleWide, HudMode::MachineSpeed,
-                            HudMode::Replay,       HudMode::Demo,      HudMode::FreePractice, HudMode::TimeTrial};
+                            HudMode::Replay,       HudMode::Demo,      HudMode::FreePractice, HudMode::TimeTrial,
+                            HudMode::Logger};
     int matched = 0;
     for (size_t m = 0; m < modes.size(); ++m) {
         ByteSpan rec = modes.records[m];
@@ -1712,7 +1766,7 @@ TEST(race_hud_layout_disc) {
         }
         ++matched;
     }
-    CHECK(matched == 12);
+    CHECK(matched == 13);
 
     // The endurance layout is a races' matter: no licence, time trial, free run or machine
     // test event has 10 laps or more or a time limit.

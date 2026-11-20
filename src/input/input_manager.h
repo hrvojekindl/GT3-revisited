@@ -263,10 +263,17 @@ public:
     // Human label for a source on this player's device (e.g. "Cross" on a
     // PlayStation pad, "A" on Xbox, "Right paddle").
     std::string describe(int player, const InputSource& src) const;
+    // The player's Controller as SDL maps it as a gamepad (its type and face button labels pick
+    // the button prompts, app/button_prompts.h); null for the keyboard, wheels and joysticks.
+    SDL_Gamepad* gamepad(int player) const;
+    // The last input pressed was a keyboard key (false after a controller's button, d-pad or
+    // stick): the button prompts show keys while the player uses the keyboard.
+    bool last_input_was_key() const { return last_input_key_; }
 
     // Ours: the player's chords for actions beyond the pad's buttons (bindings.h PadAction),
     // saved in [playerN.actions]. Pressed: the chord went down in the last update() (once per
-    // press); held: it is down.
+    // press); held: it is down. A chord that is down takes its inputs from the player's pads, each
+    // until it is let go (bindings.h Chord).
     const ActionBindings& actions(int player) const { return players_[player].actions; }
     void bind_action(int player, PadAction a, const Chord& c, bool replace) {
         players_[player].actions.bind(a, c, replace);
@@ -347,6 +354,7 @@ private:
         ActionBindings actions;
         u8 actions_held = 0, actions_pressed = 0; // bit (1 << PadAction)
         std::array<std::vector<bool>, kPadActionCount> chord_down; // per chord, last update()
+        std::vector<InputSource> chord_taken; // inputs of chords down, kept off the pads until let go
         ForceFeedbackState ffb;
         double ffb_age = 1e9; // seconds since set_force_feedback()
         ShiftLightState shift_light;
@@ -382,7 +390,10 @@ private:
     void evaluate_profile(const Player& p, const Device* dev, bool keyboard, const Profile& prof,
                           std::vector<float>& ramps, PadState& out, double dt, bool race = false) const;
     void evaluate_any_device(double dt); // any_device_pad()
+    // The chords (actions_held / actions_pressed) and the inputs they take (chord_taken), from the
+    // sources as they are: before evaluate(), which leaves the taken inputs out.
     void evaluate_actions(Player& p, bool keyboard);
+    bool chord_takes(const Player& p, const InputSource& source) const;
     // A chord capture's new input (from an event or a moved axis), if it fits the chord.
     void add_chord_input(const InputSource& s);
     void update_chord_capture();
@@ -415,6 +426,7 @@ private:
     std::vector<bool> key_latch_;
 
     bool capturing_ = false;
+    bool last_input_key_ = false; // last_input_was_key
     bool chord_capture_ = false; // capturing_ is on for a chord (begin_chord_capture)
     std::vector<InputSource> chord_inputs_;
     std::optional<Chord> captured_chord_;

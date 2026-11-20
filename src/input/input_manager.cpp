@@ -507,7 +507,26 @@ std::string InputManager::describe(int player, const InputSource& src) const {
     return prefix + own.to_string();
 }
 
+SDL_Gamepad* InputManager::gamepad(int player) const {
+    const Device* d = find_device(players_[player].device);
+    return d ? d->gamepad : nullptr;
+}
+
 void InputManager::handle_event(const SDL_Event& e) {
+    switch (e.type) { // last_input_was_key
+    case SDL_EVENT_KEY_DOWN: // not a phone's or remote's system keys (Back, volume, media)
+        if (!e.key.repeat && (e.key.scancode < SDL_SCANCODE_MUTE ||
+                              (e.key.scancode > SDL_SCANCODE_VOLUMEDOWN && e.key.scancode < SDL_SCANCODE_MODE)))
+            last_input_key_ = true;
+        break;
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+    case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+    case SDL_EVENT_JOYSTICK_HAT_MOTION: last_input_key_ = false; break;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+        if (std::abs(int(e.gaxis.value)) > 16000) last_input_key_ = false;
+        break;
+    default: break;
+    }
     switch (e.type) {
     case SDL_EVENT_JOYSTICK_ADDED:
         add_device(e.jdevice.which);
@@ -624,6 +643,11 @@ void InputManager::update_chord_capture() {
 void InputManager::evaluate_actions(Player& p, bool keyboard) {
     const Device* dev = find_device(p.device);
     p.actions_held = p.actions_pressed = 0;
+    // A taken input comes back once let go (or gone: its device, or the keyboard, switched off).
+    std::erase_if(p.chord_taken, [&](const InputSource& s) {
+        std::optional<float> v = read_source(p, dev, keyboard, s);
+        return !v || chord_input_released(s, *v);
+    });
     for (size_t a = 0; a < kPadActionCount; ++a) {
         const std::vector<Chord>& chords = p.actions.chords[a];
         std::vector<bool>& was = p.chord_down[a];
@@ -637,8 +661,18 @@ void InputManager::evaluate_actions(Player& p, bool keyboard) {
             if (down) p.actions_held = u8(p.actions_held | (1u << a));
             if (down && !was[c]) p.actions_pressed = u8(p.actions_pressed | (1u << a));
             was[c] = down;
+            if (down)
+                for (const InputSource& s : chords[c].inputs)
+                    if (std::find(p.chord_taken.begin(), p.chord_taken.end(), s) == p.chord_taken.end())
+                        p.chord_taken.push_back(s);
         }
     }
+}
+
+bool InputManager::chord_takes(const Player& p, const InputSource& source) const {
+    for (const InputSource& s : p.chord_taken)
+        if (same_physical_input(source, s)) return true;
+    return false;
 }
 
 std::string InputManager::describe(int player, const Chord& c) const {
@@ -801,7 +835,7 @@ void InputManager::evaluate_profile(const Player& p, const Device* dev, bool key
         // A source that isn't there is left out, not read as 0: `pedal` and `invert` would
         // turn that 0 into a press (the wheel preset with no wheel held Cross and Square).
         std::optional<float> read = read_source(p, dev, keyboard, b.source);
-        if (!read || (o.pedal && idle_centred(p, dev, b.source))) {
+        if (!read || (o.pedal && idle_centred(p, dev, b.source)) || chord_takes(p, b.source)) {
             ramps[bi] = 0.0f;
             continue;
         }
@@ -902,9 +936,13 @@ void InputManager::update(double dt) {
     }
     note_moved_axes();
     for (Player& p : players_) {
+        if (capturing_) { // the capture takes every input
+            p.actions_held = p.actions_pressed = 0;
+            p.chord_taken.clear();
+        } else {
+            evaluate_actions(p, keyboard_active(int(&p - players_.data()))); // first: the inputs it takes
+        }
         evaluate(p, dt);
-        if (capturing_) p.actions_held = p.actions_pressed = 0; // the capture takes every input
-        else evaluate_actions(p, keyboard_active(int(&p - players_.data())));
     }
     evaluate_any_device(dt);
     {

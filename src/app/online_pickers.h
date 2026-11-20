@@ -40,6 +40,7 @@
 namespace gt3r {
 
 class App;
+class Vfs;
 namespace data {
 class CarDatabase;
 }
@@ -64,6 +65,9 @@ struct PickerCar {
 
 // A car's id on a list, in config files and in a race request: an arcade car's label, else its car's.
 inline const std::string& car_key(const PickerCar& c) { return c.arcade.empty() ? c.label : c.arcade; }
+
+// How many cars a course's start grid holds (its road's grid slots, as the race reads them), 0 when it cannot be read.
+int course_grid_size(const Vfs& vfs, const std::string& course);
 
 // The arcade's class lists added to `cars` (the car page's classes: the cars as the arcade races them), every car of them,
 // nothing locked. Labels this disc's region lacks cannot be built and are left out.
@@ -238,7 +242,7 @@ private:
     void select(App& app, int to);
     const std::vector<PickerCourse>* courses_ = nullptr;
     std::function<u32(const std::string&)> length_m_;
-    std::string hint_ = "The host chooses the course", back_ = "Triangle: back to the lobby";
+    std::string hint_ = "The host chooses the course", back_ = "{Triangle}: back to the lobby";
     int sel_ = 0, prev_ = -1;
     float strip_x_ = 0;
     int pulse_ = 0, fade_ = 0; // frames since the last move

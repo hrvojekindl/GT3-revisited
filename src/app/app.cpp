@@ -1,10 +1,13 @@
 #include "app/app.h"
 #include "base/hitch.h"
+#include "app/button_prompts.h"
 #include "app/screen_registry.h"
 #include "app/presence.h"
 #include "app/updates.h"
 
 #include "base/log.h"
+#include "base/log_file.h"
+#include "platform/crash_handlers.h"
 #include "disc/region.h"
 #include "gt3r_version.h"
 #include "formats/png_writer.h"
@@ -60,6 +63,13 @@ void SDLCALL on_dialog(void* user, const char* const* files, int) {
 
 bool App::init(int argc, char** argv) {
     SDL_SetAppMetadata("GT3 Revisited", GT3R_VERSION, "org.gt3revisited.gt3r");
+    // The log file first, so it holds everything after it (gt3r.log; base/log_file.h).
+    {
+        const std::string dir = game::user_data_dir();
+        SDL_CreateDirectory(dir.c_str());
+        log_file::open(dir);
+    }
+    if (const char* c = SDL_getenv("GT3R_CRASH_TEST")) platform::crash_test(c); // platform/crash_handlers.h
 #if GT3R_XR
     // In a headset the window doesn't have keyboard focus (on the Quest it is invisible, on a PC
     // the headset's software may take it), and SDL drops joystick input without it: the
@@ -317,7 +327,10 @@ void App::open_saved_disc(const std::string& saved) {
 }
 
 bool App::has_menus(Language l) const {
-    return vfs_ && vfs_->exists(std::string("menu/") + text::language_code(l) + "/gt_mode3.pmb");
+    // The title page's layout: GT3's (gt_mode.mbl), Concept's (concept.mbl; its Portuguese folder has no GT3 pages).
+    if (!vfs_) return false;
+    const char* title = vfs_->region().game == GameKind::Concept ? "/concept2.pmb" : "/gt_mode3.pmb";
+    return vfs_->exists(std::string("menu/") + text::language_code(l) + title);
 }
 
 std::vector<Language> App::playable() const {
@@ -1024,6 +1037,7 @@ SDL_AppResult App::iterate() {
 #endif
     const Screen* shown = screens_.empty() ? nullptr : screens_.back().get(); // (after this frame's changes)
     layout_ui(shown && shown->adaptive_ui(), shown && shown->follows_aspect());
+    Ui::set_prompts(button_prompts(*input_, touch_.controls().visible(), touch_ui_)); // "{Cross}" in our hints
     begin_gamma_frame();
     ui_->clear();
     Uint64 h_r0 = SDL_GetTicksNS();
