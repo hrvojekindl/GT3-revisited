@@ -29,6 +29,7 @@
 
 #include "base/bytes.h"
 #include "base/game_random.h"
+#include "race/course_camera_aim.h"
 #include "render/math3d.h"
 
 #include <algorithm>
@@ -53,7 +54,7 @@ struct GtrcRecord {
     u32 mount = 0;
     float zoom_min = 1, zoom_max = 100;
     float dissolve = 0; // +0x64: seconds of dissolve at the cut to it (modes 0, 2, 3)
-    // +0x1C: the shot's camera flag 0x2000 (the designer camera, > 0.0): the heat haze
+    // +0x1C: the shot's camera flag 0x2000 (DesignerCamera::vf13 0x202344, > 0.0): the heat haze
     // lenses on courses with Env0 flag 0x20 (presentation §L6). 0.0 or 1.0 on the disc.
     float haze = 0;
     GtrcCurve zoom, pos[3], target[3];
@@ -227,17 +228,20 @@ public:
     // The view's reset: modes 0, 2, 3 re-arm the shot at the next update; mode 1 cuts at its
     // next frame.
     void reset();
-    // A new followed car (modes 0, 2, 3): the view's reset; `manual_seconds` > 0 (a manual
-    // change: the aim's move) lets the search take a record at any progress meanwhile;
-    // `search_first` (the attract demo's car change every 300 frames, mode 2's manual change)
-    // searches at once, the current record included, instead of re-arming.
-    void car_changed(double manual_seconds, bool search_first = false);
-    // The cameras' target was set this frame (a new car or pair): an on-board or 0x400 shot,
-    // or one the car is outside of, ends.
-    void target_set() { target_set_ = true; }
-    // Mode 2's TOP / AUTO switch to another car: a target set that searches at once when it
-    // ends the shot.
-    void target_switched() { target_set_ = switched_ = true; }
+    // The cameras' target was set (fn_001FF400): another car (`new_car`) ends an on-board or
+    // 0x400 shot, or one that car is outside of, and forgets the last aim point (the next
+    // shot's first frame has no turn of its own towards the car left); the followed car's
+    // battle beginning or ending only re-aims. Either ends the manual change's window.
+    void target_set(bool new_car);
+    // After it, the player's or the attract demo's change of car (modes 0, 2, 3):
+    // `manual_seconds` > 0 (a manual change: the aim's move) lets the search take a record at
+    // any progress meanwhile (until the next target, once a new shot has cut the move short);
+    // `search_first` (the attract demo's change every 300 frames, mode 2's manual change)
+    // searches at once, the current record included.
+    void car_changed(double manual_seconds, bool search_first);
+    // After it, mode 2's TOP / AUTO switch to another car: searches at once when it ends the
+    // shot or the car is far off the view (off_view).
+    void target_switched() { switched_ = true; }
     // Mode 2's gate (every 60 Hz frame): the shot length x and whether a cut request is
     // pending (the camera manager's, presentation §G14).
     void set_cut_gate(float x, bool request) { gate_x_ = x, gate_request_ = request; }
@@ -254,11 +258,22 @@ public:
 
     // Mode 2: whether the followed car has a battle partner now (its on-board cuts need one).
     void set_pair(bool on) { pair_ = on; }
+    // The aim's move from the last target (presentation §G4e): 1 - frames left / its frames, 1
+    // once over or with a pair (fn_001FF5F8); it scales the zoom spring's pull inwards.
+    void set_aim_progress(float p) { aim_progress_ = std::clamp(p, 0.0f, 1.0f); }
+    // Where the aim's move ends (the new target itself), for the next update(): a new shot cuts
+    // the move short and aims there at once (fn_001FF3D8, presentation §G4e).
+    void set_settled_aim(const render::Vec3& p) { settled_aim_ = p; }
+    // A new shot of modes 0, 2, 3 since the last call: the aim's move is over.
+    bool take_aim_cut() { return std::exchange(aim_cut_, false); }
     // Mode 2's on-board cut on the partner's car, in its first 3 s (180 frames).
     bool onboard_cut() const { return onboard_ && on_partner_ && onboard_time_ < kOnboardCutSeconds - 1e-6; }
     // The course camera's shot (or turn on board) is under 3 s (180 frames) old: mode 2's
     // TOP / AUTO waits (presentation §G3).
     bool camera_fresh() const { return armed_time_ < kOnboardCutSeconds - 1e-6; }
+    // The camera is on board the battle partner's car (mode 2's cut): the car it turned on board
+    // of, until the shot ends (a battle's end leaves it there).
+    bool on_partner() const { return onboard_ && on_partner_; }
     // The camera turned on board (the followed car's in-car view or mode 2's cut).
     bool on_board() const { return onboard_; }
     // A course shot in its first 2 s (120 frames): the battles take no new partners meanwhile.
@@ -289,13 +304,17 @@ public:
     // A GT3 zoom (1 / tan of the half horizontal angle over the 640-pixel frame) as our
     // vertical field of view: the 448-line frame (tan(half) = 0.7 / zoom) after GT3's
     // Scale(1, 1 / kYScale, 1) (presentation §G8), tan(half) = 0.7 x 1.098 / zoom.
-    static constexpr float kYScale = 1.098f; // program constant
+    static constexpr float kYScale = 1.098f; // program constant 0x34FCE8
     static float zoom_fovy(float zoom) { return 2.0f * std::atan(0.7f * kYScale / std::max(zoom, 1e-3f)); }
     // `s` = car's track distance (0..L), `lap` = its lap counter (lap_counter: 0 before the
     // start line), `car` = the point the camera aims at (the followed car, or between a pair),
     // `dt` = frame time (zoom smoothing, time-based records), `aspect` = viewport width /
     // height, `pair` = the pair's cars.
     Shot update(float s, int lap, const render::Vec3& car, double dt, float aspect, const Pair* pair = nullptr);
+    // The lap update() uses with the drawn distance s: the counter steps on the physics step that
+    // crosses the line, s on the drawn frame between steps, so at the line they disagree for a
+    // frame and the shot would be placed a lap off (a one-frame flicker). The lap steps as s wraps.
+    int seam_lap(float s, int lap);
     // The view's horizontal angle (radians) widened to keep a pair in view from `eye`: 1.1 x the
     // cars' angle apart plus the angle of 5 m at the partner's distance (when the partner is the
     // nearer car: that distance less 60 x the difference, at least 1 m), at most 70 degrees.
@@ -326,7 +345,7 @@ public:
     // One cut (presentation §G2), the original's draws in order. `followed` indexes `cars`;
     // `pick_other` (TARGET AUTO in a field): a random other car first. Then the first car from
     // there with a free course shot (find_free_shot, lasting `x` s), with a roll of -10 .. 10
-    // degrees, a wide zoom (p 0.17), a yaw seed (p 0.3, no effect) and a roll swing from
+    // degrees, a wide zoom (p 0.17), a yaw seed (p 0.3: the first frame's swing, presentation §H6a) and a roll swing from
     // +-100 degrees (p 0.1); with p 0.25, or when no car has one, a procedural camera
     // (procedural_kind; the standing-start `hold`: always the car mount). Then the look
     // (roll_look; the orbit camera raises the trail's odds to 0.6, request 3 lowers the
@@ -344,6 +363,8 @@ public:
     // shots under 3 s, 0.35 / 0.25 / 0.1 / 0.15 / 0.15 otherwise, always 4 in the hold.
     static int procedural_kind(float r, float shot_seconds, bool hold = false);
     const ProceduralShot& procedural_shot() const { return proc_; }
+    // Whether the last cut's course shot starts with the yaw seed's swing.
+    bool yaw_seeded() const { return yaw_seeded_; }
     // The shot's look: levels (p 0.25: black 0.175 r, white 0.2 + 0.8 r', swapped when the
     // first draw is under 0.0125), the trail (r - trail_bias < 0.1: timer (150 r + 50) / 100,
     // fading with p 0.5), the dissolve (r - dissolve_bias < 0.4: returned true), the colour
@@ -372,7 +393,11 @@ public:
 private:
     // Modes 0, 2, 3: one frame of the shot picker; true at a new shot (a cut, a turn on
     // board or a re-arm).
-    bool pick(int k, float s, float D);
+    bool pick(int k, float s, float D, const render::Vec3& aim_at);
+    // Whether `target` is far off the course shot's view (fn_00202760): its direction from the
+    // camera more than twice the view's angle (90 / zoom degrees) from the shown one across, or
+    // 1.5 times up or down.
+    bool off_view(const render::Vec3& target) const;
     void cut_to(int record, int variant, int k);
     void rearm(int k);
     void turn_on_board(bool partner);
@@ -383,13 +408,24 @@ private:
     bool runs_out(float D, int k, float s, double seconds) const;
     int state() const;
     Shot evaluate(const GtrcRecord& r, float D, const render::Vec3& car, double dt, const Pair* pair = nullptr);
+    // (`car`: a new shot leaves the settled aim in it)
+    Shot update_shot(float s, int lap, render::Vec3& car, double dt, float aspect, const Pair* pair);
 
     const GtrcScript* s_;
     int mode_ = 0;
     GameRandom rng_;
     int cur_ = -1, k_ = 0;     // the course camera's record (kept by mode 1's procedural cuts); mode 1's variant
-    float zoom_ = 0;
+    CourseCameraAim aim_;      // the course shot's aim and zoom (the camera operator)
+    bool aim_restart_ = true;  // the next course-shot frame is a shot's first
+    bool yaw_seeded_ = false;  // mode 1's yaw seed (A5A) for this shot
+    float yaw_seed_ = 0;       // (A64, degrees)
+    float aim_progress_ = 1;   // the aim's move between cars (the zoom spring's inward pull)
+    std::optional<render::Vec3> settled_aim_; // the move's end (this update's)
+    bool aim_cut_ = false;     // a new shot ended the move (take_aim_cut)
     float offset_ = 0;         // mode 1: added to k * L + s (line crossings during a shot)
+    int seam_lap_ = 0;         // seam_lap's last lap and distance (none after a set-up or another car)
+    float seam_s_ = 0;
+    bool seam_known_ = false;
     int serial_ = 0;
     double shot_time_ = 0;     // seconds since the cut (or re-arm)
     // Modes 0, 2, 3 (the course camera's state).
@@ -403,7 +439,7 @@ private:
     bool backwards_ = false;
     bool hold_on_ = false;     // a variant's shot (or a turn on board) from the gate: holds hold_ s
     double hold_ = 0;
-    double manual_ = 0;        // the manual car change's window (s)
+    double manual_ = 0;        // the manual car change's window (s; infinite once a new shot ended its move)
     bool target_set_ = false, attract_change_ = false, switched_ = false;
     double armed_time_ = 0;    // since the last cut, re-arm or turn on board
     float gate_x_ = 4.0f;

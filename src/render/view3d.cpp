@@ -90,6 +90,7 @@ struct FragmentUniforms {
                      // w = 1: a car reflection drawn only below full reflectivity (kDestAlphaTest)
     float wheel_blur[4];  // DrawItem::wheel_blur: x mode, y the rim's mip level; z DrawItem::fade (0 = none); w spin copies' cells
     float wheel_steps[4]; // DrawItem::wheel_steps
+    float uv_region[4];   // scene::Primitive::uv_region (the model's textures; zero: none)
 };
 
 // Frustum planes of `vp` (clip depth 0..w, far..near): w+x, w-x, w+y, w-y, z, w-z, normalised.
@@ -338,8 +339,8 @@ std::array<u8, 3> sheen_vertex_bytes(const scene::Material& m, const Vec3& light
     return out;
 }
 
-// presentation §G17. GT3's lens (its race +0x97CC object): a film 1.333 times as wide
-// as high whose diagonal is the focal length, 0.001 m per mm; the focal length f at
+// presentation §G17. GT3's lens (its race +0x97CC object): a film 1.333 (0x34FCF0) times as wide
+// as high whose diagonal is the focal length, 0.001 m per mm (0x34FF90); the focal length f at
 // the view's zoom from the projection's vertical scale; the focus s; one line of its 448-line frame
 // on the film as the unit of blur. The near side: blurs 2^k lines, k from trunc(log2(4 + 1)) (the
 // largest, 4) down to 0, each at d = f^2 s / (f^2 + N r c (s - f)) and drawn from the last one's
@@ -347,7 +348,7 @@ std::array<u8, 3> sheen_vertex_bytes(const scene::Material& m, const Vec3& light
 // sharp picture from the last. The far side: 2^(k/2) lines, k = 0, 1, ... up to 8 lines, level
 // k / 2, at weight 1/2 for even k (a mix of two levels) and 1 for odd k, each from
 // d = f^2 s / (f^2 - N r c (s - f)) on, until a distance passes the far plane or turns negative
-// (past the hyperfocal distance: everything beyond is in focus). With ln 2.
+// (past the hyperfocal distance: everything beyond is in focus). With ln 2 (0x34FF9C, 0x34FFA0).
 std::vector<DofLayer> dof_layers(const DrawOptions::DepthOfField& d, float proj_y, float near) {
     constexpr float kLn2 = 0.6931472f;
     constexpr int kNearSteps = 1, kFarSteps = 2;     // steps per doubling (+0x28, +0x24)
@@ -380,7 +381,7 @@ std::vector<DofLayer> dof_layers(const DrawOptions::DepthOfField& d, float proj_
     return out;
 }
 
-// GT3's pyramid (table, in one 640 x 224 buffer) at its sizes; wider pictures widen it.
+// GT3's pyramid (table 0x330BD0, in one 640 x 224 buffer) at its sizes; wider pictures widen it.
 std::array<int, 2> dof_level_size(int level, float aspect) {
     static constexpr int kSize[5][2] = {{320, 224}, {320, 112}, {160, 112}, {160, 56}, {160, 56}};
     const int k = std::clamp(level, 0, 4);
@@ -1679,7 +1680,8 @@ void View3D::encode(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, const Ma
     };
     // half: kAlphaFailBlend primitives are drawn in two halves: 1 = fragments passing the
     // alpha test (with depth write, in the opaque phase), 2 = the failing ones (blended,
-    // no depth write, in the blended phase). 0 = whole primitive.
+    // no depth write, in the blended phase). 0 = whole primitive. Car reflections over a
+    // cut-out (hole_split) too: 3 = the cut-out's hole, in the opaque phase, 4 = the rest.
     // Per-vertex lighting off until a primitive needs it (slot 1 of the vertex uniforms).
     push_lighting(VertexLighting{});
     bool vl_on = false;
@@ -1738,7 +1740,9 @@ void View3D::encode(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, const Ma
             textured = true;
         } else if (p.texture >= 0) {
             const GpuModel::TextureInfo& t = model->textures()[size_t(p.texture)];
-            if (t.texture) sb = {t.texture, ctx_.sampler(t.clamp_u, t.clamp_v, t.no_mips)};
+            if (t.texture)
+                sb = {t.texture, ctx_.sampler(t.clamp_u || (p.flags & scene::kClampU), t.clamp_v || (p.flags & scene::kClampV),
+                                              t.no_mips)};
             textured = t.texture != nullptr;
         }
         SDL_GPUTextureSamplerBinding sbs[3] = {sb, {env_tex, ctx_.sampler(true, true)}, sphere_sb};
@@ -1821,7 +1825,11 @@ void View3D::encode(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, const Ma
         for (int i = 0; i < 3; ++i) fu.env_c0[i] = p.env_c0[i], fu.env_c1[i] = p.env_c1[i];
         // Car reflections over an alpha-tested pass: its failing texels keep the alpha under it.
         fu.env_c1[3] = 0;
-        if (reflection) fu.params[0] = p.under_ref, fu.env_c1[3] = p.under_alpha;
+        if (reflection) {
+            fu.params[0] = p.under_ref, fu.env_c1[3] = p.under_alpha;
+            if (half == 3) fu.params[0] += 2.0f; // the failing texels only
+            if (half == 4) fu.env_c1[3] = 0;     // the passing ones only (the failing ones add nothing)
+        }
         const scene::Material& mt = p.material;
         fu.mat_ambient[3] = mt.valid ? 1.0f : 0.0f;
         if (mt.valid) {
@@ -1852,6 +1860,8 @@ void View3D::encode(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, const Ma
         fu.output[1] = guard ? 1.0f : 0.0f; // model.vert sends the colour times w
         fu.output[2] = v.item->texture && v.item->gs_bilinear ? 1.0f : 0.0f;
         fu.output[3] = (p.flags & scene::kDestAlphaTest) ? 1.0f : 0.0f;
+        const bool region = textured && !v.item->texture && !v.item->wheel_blur; // (the spin blurs sample around the wheel)
+        for (int i = 0; i < 4; ++i) fu.uv_region[i] = region ? p.uv_region[i] : 0.0f;
         // GT3's lighting runs per vertex (the VU), with the infinite viewer: the lights and
         // material go to the vertex shader. The sheen's program has a local viewer instead:
         // GT3's light model viewer (0, 2, 0) in eye space, 2 m along the camera's up axis.
@@ -1952,6 +1962,14 @@ void View3D::encode(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, const Ma
     auto split = [](const scene::Primitive& p) {
         return (p.flags & (scene::kAlphaFailBlend | scene::kAlphaTest)) == (scene::kAlphaFailBlend | scene::kAlphaTest);
     };
+    // A car reflection over an alpha-tested pass, weighted where that pass's texels failed (a
+    // wheel arch cut out of a side panel). GT3 draws the body's passes before the wheels: the
+    // hole wrote no depth, so the wheels behind it cover what the reflection put there (public
+    // issue 364). The hole is drawn with the item's opaque passes, before the items after it.
+    auto hole_split = [](const scene::Primitive& p) {
+        constexpr u32 kReflection = scene::kAdditive | scene::kEnvironmentMap | scene::kUnlit;
+        return (p.flags & kReflection) == kReflection && p.under_ref >= 0 && p.under_alpha > 0;
+    };
     bool solid = opt.wire != WireMode::Only;
 
     // Background (sky, backdrop): everything in model order, no depth writes.
@@ -1960,7 +1978,8 @@ void View3D::encode(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, const Ma
             for (const scene::Primitive& p : v.mesh->primitives) draw_prim(v, p);
     auto draw_blended = [&](const Visible& v) {
         for (const scene::Primitive& p : v.mesh->primitives)
-            if (prim_blended(p) || v.item->alpha < 1.0f) draw_prim(v, p, split(p) && v.item->alpha >= 1.0f ? 2 : 0);
+            if (prim_blended(p) || v.item->alpha < 1.0f)
+                draw_prim(v, p, v.item->alpha < 1.0f ? 0 : split(p) ? 2 : hole_split(p) ? 4 : 0);
     };
     // Opaque and alpha-tested, item by item; an in-order item's blended primitives follow its
     // opaque ones, in model order, before the next item's opaque ones (DrawItem::in_order_join
@@ -2003,6 +2022,7 @@ void View3D::encode(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, const Ma
             if (v.item->alpha < 1.0f) continue;
             if (!prim_blended(p)) draw_prim(v, p);
             else if (split(p)) draw_prim(v, p, 1);
+            else if (hole_split(p)) draw_prim(v, p, 3);
         }
         if (v.item->in_order && (i + 1 == vis.size() || !same_run(i + 1))) {
             for (size_t k = run; k <= i; ++k) draw_blended(vis[k]);

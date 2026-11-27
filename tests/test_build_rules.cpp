@@ -141,6 +141,12 @@ TEST(build_rules_special_cars) {
         ex::mood_step(c, k, 5, false);
         CHECK((c.later.special[1] & 0xF) == 1 && c.later.special[2] == (pal ? 99 : 119) && c.later.special[3] == (pal ? 19 : 23));
         CHECK(c.later.special[6] == 1 && c.later.special[4] == 1);
+        // What its model shows: mood 1 asked for this step, its lamps' class 4 fading in (one step of 24; 20), the lean
+        // level and the nod one step up (of half its period, 24; 20).
+        const sim::VehicleState::Special look = ex::special_look(c, k);
+        const float steps24 = pal ? 20.0f : 24.0f;
+        CHECK(look.mood == 1 && look.mood_new == 1 && look.lamp == 4 && look.lamp_weight == 1 / steps24);
+        CHECK(look.lean == 0.5f && look.nod == 0.5f + 1 / steps24 && look.wing == 0);
         int steps = 0;
         while ((c.later.special[1] & 0xF) == 1 && steps < 400) ex::mood_step(c, k, 0, false), ++steps;
         CHECK(steps == (pal ? 99 : 119) && c.later.special[1] == 0x10);
@@ -169,6 +175,7 @@ TEST(build_rules_special_cars) {
         for (int i = 0; i < 200; ++i) ex::wing_step(c);
         std::memcpy(&v.bits, c.later.special.data(), 4);
         CHECK(v.bits == one.bits);
+        CHECK(ex::special_look(c, ex::MoodTables{}).wing == 1.0f && ex::special_look(c, ex::MoodTables{}).mood == 0);
         c.speed = F(17.0f); // between the two speeds: stays out
         ex::wing_step(c);
         CHECK(c.later.special[4] == 1);
@@ -400,7 +407,7 @@ TEST(build_rules_pod_race) {
     CHECK(ex::stop_zone_setup(kTokyo, 5, 660, 33, lap, 3).active == 0);
     CHECK(ex::stop_zone_setup(kTokyo, 1, 608, 33, lap, 3).active == 0 && ex::stop_zone_setup(kGt3, 5, 608, 33, lap, 3).active == 0);
     CHECK(ex::stop_zone_setup(kTokyo, 5, 0, 33, lap, 3).active == 0 && ex::stop_zone_setup(kTokyo, 5, 608, 0, lap, 3).active == 0);
-    // The rule each step (the race clock): car 0 the player's, cars 1 and 2 the computer's, each owing its first lap's stop.
+    // The rule each step (virtual 14): car 0 the player's, cars 1 and 2 the computer's, each owing its first lap's stop.
     ex::RaceFlowInputs in;
     in.kind = ex::Conductor::SinglePlayer, in.behaviour = kTokyo, in.laps = 3;
     in.messages[0] = 0;
@@ -446,7 +453,7 @@ TEST(build_rules_pod_race) {
         cars = race(0, 630.0f, false, 0, 600.0f); // off its ground inside it: nothing
         ex::race_mode_clock(cars, in, flow, events, {});
         CHECK(cars[0].x51c == 0);
-        // Under the time trial's conductor (its own the race clock) nothing; nor at 2 cars' race of GT3.
+        // Under the time trial's conductor (its own virtual 14) nothing; nor at 2 cars' race of GT3.
         in.kind = ex::Conductor::TimeTrial;
         cars = race(0x22, 615.0f, true, 0x22, 610.0f);
         ex::race_mode_clock(cars, in, flow, events, {});
@@ -603,7 +610,7 @@ TEST(build_rules_solo_recorder_layout) {
     CHECK(!g.ghost_from_best(l) && !g.later);
 }
 
-// The pass-by states: a slipstream held a second makes state 1, a car alongside 2, just ahead 3; behind again the
+// The pass-by states (0x1F59B0): a slipstream held a second makes state 1, a car alongside 2, just ahead 3; behind again the
 // pair's roles swap; at 50 steps a second the timer's cap and the second are PAL's (250, 51).
 TEST(build_rules_pass_by) {
     for (const bool pal : {false, true}) {

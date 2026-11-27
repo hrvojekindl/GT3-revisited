@@ -311,13 +311,16 @@ with the weight-reduction and body parts, without the 120 kg the race adds: an R
 1,560 kg is 1,450, 1,388 and 1,326 kg with stages 1, 2 and 3.
 
 The built torque T is the peak torque (kgf·m, from the same samples as the power) × 10,
-converted with the power's factor (× 0.98619 where the power is in HP, BHP or CV, whatever
-the torque's unit) and truncated. The garage page shows T × 0.1 with one decimal, the
-torque's unit and the torque peak's rpm: a new R34's 45.6 kgf·m is "45.0ft.lb/4500rpm" on
-NTSC-U. The dealer page shows the catalog torque instead: the engine's kgf·m × 100 in the
-language's unit (ft.lb: × 7.2329), truncated, with two decimals and the catalog rpm
-("489.66ft.lb/3700rpm" for a Viper GTS); a car without one shows nothing. Both pages show
-the fitted engine's displacement text ("2568cc").
+converted with the power's factor (× 0.98619 where the power is in HP, BHP or CV,
+whatever the torque's unit) and truncated; the torque-to-weight ratio uses it. The garage
+page shows the peak torque × 10 converted to the torque's unit (ft.lb: × 7.2329),
+truncated, then × 0.1 with one decimal, the torque's unit and the torque peak's rpm: a
+new R34's 45.6 kgf·m is "330.3ft.lb/4500rpm" on NTSC-U. GT3 prints T × 0.1 there instead,
+so NTSC-U shows the kgf·m figure labeled ft.lb ("45.0ft.lb/4500rpm"); this engine shows
+the torque in the unit its label names. The dealer page shows the catalog torque instead:
+the engine's kgf·m × 100 in the language's unit (ft.lb: × 7.2329), truncated, with two
+decimals and the catalog rpm ("489.66ft.lb/3700rpm" for a Viper GTS); a car without one
+shows nothing. Both pages show the fitted engine's displacement text ("2568cc").
 
 The ratios are computed in single precision, truncated to whole numbers and shown with three
 decimals and no unit:
@@ -385,6 +388,10 @@ the matching rear tire. Rally cars (car category 2, car +0xF1) also own dirt tir
 3. the database has a part of that table and stage made for this car. The part record
    +0x08 must equal the car (`ts/not_exist`). A turbo car, for example, has no NA tune;
 4. the credits cover the part's price (`00cmn/no_money`).
+
+The weight reduction stages are bought in order: on the shop's Others page (`ts/ts_ot`)
+stage 2's button refuses, at half brightness, until stage 1 is owned, and stage 3's until
+stage 2 is (`enabled`, `src/game/gt_mode_menu/prechecks.cpp`). No other part has an order.
 
 Buying takes the price and marks the goods owned. A front tire also marks its rear
 tire. A tire set costs the front record's price, and the rear record counts as free.

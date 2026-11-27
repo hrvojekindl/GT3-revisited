@@ -1,7 +1,10 @@
 #include "formats/model/gltf.h"
 
 #include "formats/json.h"
+#include "formats/model/gtm1.h"
 #include "formats/png_reader.h"
+#include "formats/png_writer.h"
+#include "formats/texture_pack.h"
 
 #include <algorithm>
 #include <cmath>
@@ -171,28 +174,84 @@ struct LampBoxes {
     std::array<Box, 2> head, rear;
 };
 
-// load_glb; with `lamps`, also the lamps' boxes (and no textures decoded: the white one stands in).
-scene::Model load_glb_impl(ByteSpan d, const GlbOptions& opt, const std::string& name, LampBoxes* lamps);
+// What a livery needs of a body primitive (apply_livery, glb_livery_textures).
+struct LiveryPart {
+    size_t primitive = 0;       // in the body mesh
+    u32 first = 0, count = 0;   // its vertices
+    Role role = Role::Plain;
+    std::string material;
+    float own[3] = {1, 1, 1};  // the material's base colour without GlbOptions::paint
+    float base[3] = {1, 1, 1}; // ... as drawn
+    bool uv = false;
+    std::vector<u32> plain; // its vertex colours without the base colour (with a livery)
+};
 
-} // namespace
-
-scene::Model load_glb(ByteSpan d, const GlbOptions& opt, const std::string& name) {
-    return load_glb_impl(d, opt, name, nullptr);
+u32 tinted(u32 c, const float* f) {
+    u32 v = c & 0xFF000000u;
+    for (int k = 0; k < 3; ++k)
+        v |= u32(std::lround(std::clamp(float((c >> (8 * k)) & 0xFF) * f[k], 0.0f, 255.0f))) << (8 * k);
+    return v;
 }
 
-GlbLamps glb_lamps(ByteSpan d) {
-    LampBoxes boxes;
-    GlbOptions opt;
-    opt.reflections = false;
-    load_glb_impl(d, opt, {}, &boxes);
-    GlbLamps out;
-    for (size_t s = 0; s < 2; ++s) out.head[s] = boxes.head[s].middle(), out.rear[s] = boxes.rear[s].middle();
+// The body's primitives by the key of their texture, in file order: those a livery can cover.
+std::vector<std::pair<u64, std::vector<const LiveryPart*>>> livery_groups(const scene::Model& m, const scene::Mesh& body,
+                                                                          const std::vector<LiveryPart>& parts) {
+    std::map<int, u64> keys; // by texture
+    std::vector<std::pair<u64, std::vector<const LiveryPart*>>> out;
+    for (const LiveryPart& p : parts) {
+        const int tex = body.primitives[p.primitive].texture;
+        // (untextured materials all share the white texture: a picture on it is the paint's)
+        if (!p.uv || tex < 0 || (tex == 0 && p.role != Role::Paint)) continue;
+        const scene::Texture& t = m.textures[size_t(tex)];
+        auto it = keys.find(tex);
+        if (it == keys.end()) it = keys.emplace(tex, texture_pack::key_of(t.width, t.height, t.rgba.data())).first;
+        auto g = std::find_if(out.begin(), out.end(), [&](const auto& e) { return e.first == it->second; });
+        if (g == out.end()) out.push_back({it->second, {}}), g = out.end() - 1;
+        g->second.push_back(&p);
+    }
     return out;
 }
 
-namespace {
+// The part whose base colour the group's template shows: the first paint material's, else the first.
+const LiveryPart& shown_part(const std::vector<const LiveryPart*>& g) {
+    for (const LiveryPart* p : g)
+        if (p->role == Role::Paint) return *p;
+    return *g.front();
+}
 
-scene::Model load_glb_impl(ByteSpan d, const GlbOptions& opt, const std::string& name, LampBoxes* lamps) {
+void apply_livery(scene::Model& m, scene::Mesh& body, const std::vector<LiveryPart>& parts, const GlbOptions& opt) {
+    for (const auto& [key, group] : livery_groups(m, body, parts)) {
+        std::shared_ptr<const texture_pack::Image> pic = opt.livery->find(key);
+        if (!pic) continue;
+        // The picture's template: the texture in the paint it was painted over.
+        const LiveryPart& shown = shown_part(group);
+        const float* under = shown.role == Role::Paint && opt.livery_paint ? opt.livery_paint->data() : shown.own;
+        const scene::Texture raw = m.textures[size_t(body.primitives[shown.primitive].texture)];
+        std::vector<u32> templ(raw.rgba.size());
+        for (size_t i = 0; i < templ.size(); ++i) templ[i] = tinted(raw.rgba[i], under);
+        // One copy per base colour the texture is drawn in, the colour in its texels.
+        std::map<std::array<float, 3>, int> copies; // -1: the picture covers nothing
+        for (const LiveryPart* p : group) {
+            const std::array<float, 3> base{p->base[0], p->base[1], p->base[2]};
+            auto it = copies.find(base);
+            if (it == copies.end()) {
+                scene::Texture t = raw;
+                for (u32& c : t.rgba) c = tinted(c, p->base);
+                gtm1::overlay_livery(t, *pic, {templ.data(), raw.width, raw.height});
+                it = copies.emplace(base, t.livery_cover ? int(m.textures.size()) : -1).first;
+                if (t.livery_cover) m.textures.push_back(std::move(t));
+            }
+            if (it->second < 0) continue;
+            body.primitives[p->primitive].texture = it->second;
+            for (u32 i = 0; i < p->count; ++i) body.vertices[p->first + i].color = p->plain[i];
+        }
+    }
+}
+
+// load_glb; with `parts`, also what a livery needs of each body primitive; with `lamps`, also the lamps' boxes
+// (and no textures decoded: the white one stands in).
+scene::Model load(ByteSpan d, const GlbOptions& opt, const std::string& name, std::vector<LiveryPart>* parts,
+                  LampBoxes* lamps = nullptr) {
     if (d.size() < 20 || std::memcmp(d.data(), "glTF", 4) != 0) throw FormatError("not a binary glTF (.glb) file");
     if (rd32(d, 4) != 2) throw FormatError("glTF: only version 2 is supported");
     Glb g;
@@ -262,6 +321,8 @@ scene::Model load_glb_impl(ByteSpan d, const GlbOptions& opt, const std::string&
         float base[4] = {1, 1, 1, 1};
         for (int k = 0; k < 4; ++k)
             if (pbr["baseColorFactor"].size() == 4) base[k] = float(pbr["baseColorFactor"][size_t(k)].number());
+        LiveryPart part;
+        std::copy(base, base + 3, part.own);
         if (role == Role::Paint && opt.paint)
             for (int k = 0; k < 3; ++k) base[k] = (*opt.paint)[size_t(k)];
         const Value& base_tex = pbr["baseColorTexture"];
@@ -297,6 +358,12 @@ scene::Model load_glb_impl(ByteSpan d, const GlbOptions& opt, const std::string&
                 for (size_t k = 0; k < std::min<size_t>(col->comps, 4); ++k) c[k] *= col->get(i, k);
             v.color = rgba8(c[0], c[1], c[2], c[3]);
             body.vertices.push_back(v);
+            if (parts) {
+                float w[3] = {1, 1, 1};
+                if (col)
+                    for (size_t k = 0; k < std::min<size_t>(col->comps, 3); ++k) w[k] = col->get(i, k);
+                part.plain.push_back(rgba8(w[0], w[1], w[2], c[3]));
+            }
         }
         if (!nrm) { // smooth normals from the faces
             for (size_t t = 0; t + 2 < idx.size(); t += 3) {
@@ -343,6 +410,15 @@ scene::Model load_glb_impl(ByteSpan d, const GlbOptions& opt, const std::string&
         if (role == Role::BrakeLamp) p.material.lamp_emission[0] = 1.2f, p.material.lamp_emission[1] = 0.25f;
         p.material.shininess = role == Role::Paint ? 24 : role == Role::Glass ? 48 : 8 + 40 * (1 - rough);
         if (p.index_count) body.primitives.push_back(p);
+        if (parts && p.index_count) {
+            part.primitive = body.primitives.size() - 1;
+            part.first = first, part.count = u32(body.vertices.size()) - first;
+            part.role = role;
+            part.material = mat["name"].string();
+            std::copy(base, base + 3, part.base);
+            part.uv = uv.has_value();
+            parts->push_back(std::move(part));
+        }
 
         // Reflection pass (paint and glass), like GT3's car env-map packets.
         if (opt.reflections && (role == Role::Paint || role == Role::Glass) && p.index_count) {
@@ -380,6 +456,7 @@ scene::Model load_glb_impl(ByteSpan d, const GlbOptions& opt, const std::string&
         for (size_t i = 0; i < g.doc["nodes"].size(); ++i) visit(int(i), Mat4{}, 0);
     }
     if (body.indices.empty()) throw FormatError("glTF: no triangles");
+    if (opt.livery && parts) apply_livery(model, body, *parts, opt);
     model.meshes.push_back(std::move(body));
     if (!env.indices.empty()) model.meshes.push_back(std::move(env));
     model.compute_bounds();
@@ -387,5 +464,192 @@ scene::Model load_glb_impl(ByteSpan d, const GlbOptions& opt, const std::string&
 }
 
 } // namespace
+
+scene::Model load_glb(ByteSpan d, const GlbOptions& opt, const std::string& name) {
+    std::vector<LiveryPart> parts;
+    return load(d, opt, name, opt.livery ? &parts : nullptr);
+}
+
+GlbLamps glb_lamps(ByteSpan d) {
+    LampBoxes boxes;
+    GlbOptions opt;
+    opt.reflections = false;
+    load(d, opt, {}, nullptr, &boxes);
+    GlbLamps out;
+    for (size_t s = 0; s < 2; ++s) out.head[s] = boxes.head[s].middle(), out.rear[s] = boxes.rear[s].middle();
+    return out;
+}
+
+std::vector<GlbLiveryTexture> glb_livery_textures(ByteSpan d, const std::optional<std::array<float, 3>>& paint, u32 max_texture_dim) {
+    GlbOptions opt;
+    opt.paint = paint;
+    opt.reflections = false;
+    opt.max_texture_dim = max_texture_dim;
+    std::vector<LiveryPart> parts;
+    const scene::Model m = load(d, opt, {}, &parts);
+    const scene::Mesh& body = m.meshes.front();
+    std::vector<GlbLiveryTexture> out;
+    for (const auto& [key, group] : livery_groups(m, body, parts)) {
+        const LiveryPart& shown = shown_part(group);
+        const int tex = body.primitives[shown.primitive].texture;
+        const scene::Texture& t = m.textures[size_t(tex)];
+        GlbLiveryTexture& g = out.emplace_back();
+        g.key = key;
+        g.paint = shown.role == Role::Paint;
+        g.blank = tex == 0;
+        g.name = g.blank || t.name.empty() ? shown.material : t.name;
+        g.width = t.width, g.height = t.height;
+        for (u32 c : t.rgba) g.rgba.push_back(tinted(c, shown.base));
+        float area = 0; // (a textureless paint whose UVs are all one point has no layout to paint on)
+        for (const LiveryPart* p : group) {
+            const scene::Primitive& pr = body.primitives[p->primitive];
+            for (u32 i = pr.first_index; i + 2 < pr.first_index + pr.index_count; i += 3) {
+                GlbLiveryTexture::Triangle tri{};
+                for (u32 k = 0; k < 3; ++k) {
+                    const scene::Vertex& v = body.vertices[body.indices[i + k]];
+                    tri.uv[k][0] = v.uv[0], tri.uv[k][1] = v.uv[1];
+                    for (int a = 0; a < 3; ++a) tri.normal[a] += v.normal[a];
+                }
+                area += std::fabs((tri.uv[1][0] - tri.uv[0][0]) * (tri.uv[2][1] - tri.uv[0][1]) -
+                                  (tri.uv[1][1] - tri.uv[0][1]) * (tri.uv[2][0] - tri.uv[0][0]));
+                g.triangles.push_back(tri);
+            }
+        }
+        if (g.blank && !(area > 1e-4f)) out.pop_back();
+    }
+    return out;
+}
+
+Bytes reencode_glb_images(ByteSpan d, u32 max_dim) {
+    if (d.size() < 20 || std::memcmp(d.data(), "glTF", 4) != 0) throw FormatError("not a binary glTF (.glb) file");
+    if (rd32(d, 4) != 2) throw FormatError("glTF: only version 2 is supported");
+    json::Value doc;
+    bool have_doc = false;
+    Bytes bin;
+    size_t o = 12;
+    while (o + 8 <= d.size()) {
+        const u32 len = rd32(d, o), type = rd32(d, o + 4);
+        if (o + 8 + len > d.size()) throw FormatError("glTF: truncated chunk");
+        ByteSpan body = d.subspan(o + 8, len);
+        if (type == 0x4E4F534A) {
+            doc = json::Value::parse(std::string_view(reinterpret_cast<const char*>(body.data()), body.size()));
+            have_doc = true;
+        } else if (type == 0x004E4942 && bin.empty()) {
+            bin.assign(body.begin(), body.end());
+        }
+        o += 8 + ((len + 3) & ~3u);
+    }
+    if (!have_doc || !doc.is_object()) throw FormatError("glTF: no JSON chunk");
+    // The views accessors read (geometry): never zeroed, even if an image shares one.
+    std::vector<bool> geometry(doc["bufferViews"].size(), false);
+    for (const json::Value& a : doc["accessors"].items())
+        if (const int v = a["bufferView"].integer(-1); v >= 0 && size_t(v) < geometry.size()) geometry[size_t(v)] = true;
+    auto view_range = [&](int v, size_t& off, size_t& len) {
+        const json::Value& bv = doc["bufferViews"][size_t(v)];
+        if (!bv.is_object() || bv["buffer"].integer() != 0) return false;
+        off = Glb::size_of(bv["byteOffset"], bin.size(), "buffer view offset");
+        len = Glb::size_of(bv["byteLength"], bin.size() - off, "buffer view length");
+        return true;
+    };
+    std::vector<std::pair<size_t, size_t>> old_images; // ranges to zero
+    std::vector<Bytes> fresh;                          // each image's new PNG, in image order
+    const Bytes white = encode_png(1, 1, {0xFFFFFFFFu});
+    for (const json::Value& im : doc["images"].items()) {
+        Bytes png = white;
+        if (im.has("bufferView")) {
+            const int v = im["bufferView"].integer(-1);
+            size_t off = 0, len = 0;
+            if (v >= 0 && size_t(v) < geometry.size() && view_range(v, off, len)) {
+                if (im["mimeType"].string() == "image/png" || im["mimeType"].string().empty()) {
+                    const PngImage p = decode_png(ByteSpan(bin).subspan(off, len), max_dim);
+                    png = encode_png(p.width, p.height, p.rgba);
+                }
+                if (!geometry[size_t(v)]) old_images.emplace_back(off, len);
+            }
+        }
+        fresh.push_back(std::move(png));
+    }
+    for (const auto& [off, len] : old_images) std::fill(bin.begin() + std::ptrdiff_t(off), bin.begin() + std::ptrdiff_t(off + len), u8(0));
+    // The new images at the end of the buffer, each in a view of its own.
+    json::Value* images = doc.member("images");
+    for (size_t i = 0; images && i < fresh.size(); ++i) {
+        while (bin.size() % 4) bin.push_back(0);
+        json::Value view = json::Value::empty_object();
+        view.set("buffer", json::Value::of_number(0));
+        view.set("byteOffset", json::Value::of_number(double(bin.size())));
+        view.set("byteLength", json::Value::of_number(double(fresh[i].size())));
+        bin.insert(bin.end(), fresh[i].begin(), fresh[i].end());
+        json::Value* views = doc.member("bufferViews");
+        const size_t index = views ? views->size() : 0;
+        if (views) views->push(std::move(view));
+        else {
+            json::Value arr;
+            arr.push(std::move(view));
+            doc.set("bufferViews", std::move(arr));
+        }
+        json::Value* im = images->item(i);
+        im->erase("uri");
+        im->set("bufferView", json::Value::of_number(double(index)));
+        im->set("mimeType", json::Value::of_string("image/png"));
+    }
+    while (bin.size() % 4) bin.push_back(0);
+    // One buffer: the GLB's own.
+    json::Value buffer = json::Value::empty_object();
+    buffer.set("byteLength", json::Value::of_number(double(bin.size())));
+    if (json::Value* buffers = doc.member("buffers"); buffers && buffers->item(0)) {
+        *buffers->item(0) = buffer;
+    } else {
+        json::Value arr;
+        arr.push(std::move(buffer));
+        doc.set("buffers", std::move(arr));
+    }
+    std::string text = doc.dump();
+    while (text.size() % 4) text += ' ';
+    Bytes out;
+    auto put32 = [&](u32 v) {
+        for (int k = 0; k < 4; ++k) out.push_back(u8(v >> (8 * k)));
+    };
+    out.insert(out.end(), {'g', 'l', 'T', 'F'});
+    put32(2);
+    put32(u32(12 + 8 + text.size() + 8 + bin.size()));
+    put32(u32(text.size()));
+    put32(0x4E4F534A);
+    out.insert(out.end(), text.begin(), text.end());
+    put32(u32(bin.size()));
+    put32(0x004E4942);
+    out.insert(out.end(), bin.begin(), bin.end());
+    return out;
+}
+
+std::vector<std::string> glb_image_warnings(ByteSpan d) {
+    std::vector<std::string> out;
+    if (d.size() < 20 || std::memcmp(d.data(), "glTF", 4) != 0) return out;
+    json::Value doc;
+    size_t o = 12;
+    while (o + 8 <= d.size()) {
+        const u32 len = rd32(d, o), type = rd32(d, o + 4);
+        if (o + 8 + len > d.size()) return out;
+        if (type == 0x4E4F534A) {
+            try {
+                doc = json::Value::parse(std::string_view(reinterpret_cast<const char*>(d.data() + o + 8), len));
+            } catch (const std::exception&) {
+                return out;
+            }
+            break;
+        }
+        o += 8 + ((len + 3) & ~3u);
+    }
+    for (size_t i = 0; i < doc["images"].size(); ++i) {
+        const json::Value& im = doc["images"][i];
+        const std::string mime = im["mimeType"].string();
+        const std::string which = "texture " + (im["name"].string().empty() ? std::to_string(i)
+                                                                            : "\"" + im["name"].string().substr(0, 40) + "\"");
+        if (!im.has("bufferView")) out.push_back(which + ": separate file, shows white (embed it)");
+        else if (!mime.empty() && mime != "image/png")
+            out.push_back(which + ": " + (mime.find("jp") != std::string::npos ? std::string("JPEG") : mime) +
+                          ", shows white (use PNG)");
+    }
+    return out;
+}
 
 } // namespace gt3r

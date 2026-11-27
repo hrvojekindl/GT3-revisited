@@ -51,10 +51,10 @@ void hide_ok_until_accepted(const MenuController& ctl, const std::string& page, 
     }
 }
 
-// The prize car page's "Bonus car acquired" ticker (car get message item: its update and draw run
-// only once the roulette has given the controls back): none until then,
-// then its marquee from the frame after. The "after" layer is built on that frame too:
-// its band fades in over 24 frames from then (its elements' fade flags, as any
+// The prize car page's "Bonus car acquired" ticker (CarGetMessageItem: its update and draw run
+// only once the roulette has given the controls back, 0x13E44C / 0x13E484): none until then,
+// then its marquee from the frame after. The "after" layer is built on that frame too
+// (0x13EE48): its band fades in over 24 frames from then (its elements' fade flags, as any
 // layer's when it is built).
 void car_get_message(const MenuController& ctl, const std::string& page, DrawList& out) {
     const MenuState& ms = menu_state();
@@ -113,9 +113,10 @@ void draw_map_pointer(const MenuController& ctl, const std::string& page, DrawLi
     }
 }
 
-// Prize presentations: the 3D model goes over the page's art (its widget sits
-// under the full-page background in the layout's order).
-void raise_prize_model(const MenuController& ctl, const std::string& page, DrawList& out) {
+// Prize presentations: the 3D model draws at its widget's depth, over the page's background
+// and under its texts (lc_get: background z 1, card 4, messages 10 / 12, OK 32; trophy_get:
+// the trophy 9, the bonus box 4, the counters and messages 18 to 32).
+void place_prize_model(const MenuController& ctl, const std::string& page, DrawList& out) {
     if (page == "license_get" || page == "trophy_get") {
         auto it = std::find_if(out.begin(), out.end(), [](const menu::ElementDraw& d) {
             return d.element && d.element->widget_class && *d.element->widget_class == "render_model";
@@ -133,7 +134,8 @@ void raise_prize_model(const MenuController& ctl, const std::string& page, DrawL
         }
         if (d.element) {
             d.alpha = 1; // the marker itself may be transparent; the model fades by itself
-            out.push_back(d);
+            // (The list is in depth order here: after the last draw at or under its depth.)
+            out.insert(std::find_if(out.begin(), out.end(), [&](const menu::ElementDraw& x) { return x.z > d.z; }), d);
         }
     }
 }
@@ -195,7 +197,7 @@ void inset_tune_shop_texts(const MenuController& ctl, DrawList& out) {
 // Gran Turismo Concept's settings menu (its Custom page and the slider pages over it): the slider pages
 // hold an axle's letter right-aligned in a box that overlaps its value's left-aligned one, and the Custom page's letters
 // start at their icons' edge; drawn as the original's items draw their texts, half the font's size in from the box's
-// side, the letter and the value stand side by side.
+// side (0x1BA090), the letter and the value stand side by side.
 void inset_concept_slider_texts(const MenuController& ctl, DrawList& out) {
     if (!concept_active()) return;
     for (int level = 0; level <= ctl.depth(); ++level) {
@@ -394,7 +396,7 @@ void draw_permitted_cars(const MenuController& ctl, GtModeSession& s, const Page
 }
 
 // Wheel shop: the brand page's wheels as tiles in a row in the "menu_wheel_shop" window
-// (wheel shop button: each tile is the page's hidden image named after the wheel, 52 x 52,
+// (WheelShopButton: each tile is the page's hidden image named after the wheel, 52 x 52,
 // with "sold_out" over it for a wheel already owned; placed by WheelRow, the focused one
 // washed light grey).
 void draw_wheel_tiles(const MenuController& ctl, GtModeSession& s, const PageRef& ref, DrawList& out) {
@@ -442,10 +444,10 @@ void draw_wheel_tiles(const MenuController& ctl, GtModeSession& s, const PageRef
 }
 
 // The garage's wheel list (hm/hm_wheel, WheelList): per button the page's "wheel" frame, the
-// "mark" frame over the entry the car wears, then the entry's tile in the middle (wheel button
-// the program draws them in that order), clipped to the "menu_wheel" window. The focused button
+// "mark" frame over the entry the car wears, then the entry's tile in the middle (WheelButton
+// 0x1C10B8 draws them in that order), clipped to the "menu_wheel" window. The focused button
 // keeps the controller's own draws of the item (its focus look), moved to where the list puts
-// it. The scroll bar shows only when the row is longer than it (scroll bar): the track
+// it. The scroll bar shows only when the row is longer than it (ScrollBar 0x1C34C8): the track
 // (the widget's own art) with the hidden "pinch" over the visible share at the row's scroll
 // position. (The page's hidden tiles named after car models are never drawn: GT3's list only
 // names the placeholder's "default_wheel" and the bought wheels.)
@@ -654,7 +656,7 @@ void extra_draws(const MenuController& ctl, std::vector<menu::ElementDraw>& out)
     hide_ok_until_accepted(ctl, page, out);
     car_get_message(ctl, page, out);
     draw_map_pointer(ctl, page, out);
-    raise_prize_model(ctl, page, out);
+    place_prize_model(ctl, page, out);
     place_status_day(ctl, out);
     inset_tune_shop_texts(ctl, out);
     inset_concept_slider_texts(ctl, out);

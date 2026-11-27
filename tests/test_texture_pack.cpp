@@ -152,6 +152,32 @@ TEST(texture_pack_replaces_decoded_sets) {
     CHECK(raw.size() == 1 && raw[0].width == 4); // the disc's, for keys
 }
 
+// Cars (Options::gs_mip_levels): a texture whose TEX1 has MXL 0 is sampled from its full-size image
+// only, as the GS samples it; MXL > 0 keeps its mips, and so does a texture pack's picture.
+TEST(texture_set_mip_levels_follow_tex1) {
+    Bytes set = synthetic_set(false);
+    std::vector<scene::Texture> t;
+    gtm1::decode_texture_set(set, t, "t", 0, nullptr, false, nullptr, nullptr, true);
+    CHECK(t.size() == 1 && t[0].no_mips); // (TEX1 0: MXL 0)
+    t.clear();
+    gtm1::decode_texture_set(set, t, "t", 0, nullptr, false);
+    CHECK(t.size() == 1 && !t[0].no_mips); // courses: unchanged
+    put64(set, 0x38, 2ull << 2);           // MXL 2
+    t.clear();
+    gtm1::decode_texture_set(set, t, "t", 0, nullptr, false, nullptr, nullptr, true);
+    CHECK(t.size() == 1 && !t[0].no_mips);
+
+    const Bytes plain = synthetic_set(false);
+    const auto dir = test::temp_dir("tp-mips");
+    auto pack = std::make_shared<texture_pack::Pack>();
+    const u64 key = texture_pack::keys_of_set(plain)[0];
+    pack->add_file(key, write_png(dir / (texture_pack::key_name(key) + ".png"), 8, 8, ramp(8, 8)));
+    PackScope scope(pack);
+    t.clear();
+    gtm1::decode_texture_set(plain, t, "t", 0, nullptr, true, nullptr, nullptr, true);
+    CHECK(t.size() == 1 && t[0].width == 8 && !t[0].no_mips);
+}
+
 TEST(texture_pack_cuts_region_clamped_textures) {
     // REGION_CLAMP u 1..2, v 0..3: Tex1::decode keeps a 2x4 part of the 4x4 texture.
     const u64 clamp = 2 | (0ull << 2) | (1ull << 4) | (2ull << 14);
@@ -280,6 +306,90 @@ TEST(glb_export_round_trip) {
     const Bytes both = export_glb(m, all);
     const std::string json2(both.begin() + 20, both.begin() + 20 + rd32(both, 12));
     CHECK(json2.find("\"LOD 0\"") != std::string::npos && json2.find("\"LOD 1\"") != std::string::npos);
+}
+
+// A tyre's picture is in the car's race file and, larger, in its menu file: a picture for either
+// one shows on both (issue 457), and each one's own picture comes first.
+TEST(texture_pack_disc_tyres) {
+    Disc* disc = test::any_region_disc();
+    if (!disc) SKIP("needs GT3R_DISC");
+    const auto read = [&](const std::string& path) -> std::optional<Bytes> {
+        const Volume::Entry* e = disc->volume().find(path);
+        return e ? std::optional<Bytes>(disc->volume().read(*e)) : std::nullopt;
+    };
+    // The disc's first car with both files (Gran Turismo Concept's are others than GT3's).
+    std::string model;
+    for (const std::string& name : disc->volume().list_dir("cars/day/"))
+        if (model.empty() && race_tyre(read, name) && menu_tyre(read, name)) model = name;
+    const std::optional<Bytes> race = read("cars/day/" + model), menu = read("menu/cars/" + model);
+    const std::optional<Bytes> race_gttr = race_tyre(read, model), menu_gttr = menu_tyre(read, model);
+    CHECK(race && menu && race_gttr && menu_gttr);
+    if (!race || !menu || !race_gttr || !menu_gttr) return;
+    const auto key = [](const Bytes& gttr) { return texture_pack::keys_of_set(ByteSpan(gttr).subspan(rd32(gttr, 0x1C))).at(0); };
+    const u64 race_key = key(*race_gttr), menu_key = key(*menu_gttr);
+    CHECK(race_key != menu_key);
+
+    const auto dir = test::temp_dir("tp-tyres");
+    const std::vector<u32> green(32 * 16, 0xFF00FF00u), blue(32 * 16, 0xFFFF0000u);
+    const std::string green_png = write_png(dir / "green.png", 32, 16, green), blue_png = write_png(dir / "blue.png", 32, 16, blue);
+
+    // The tyre texture the front left wheel of a LOD draws.
+    const auto tyre = [](const scene::Model& m, int lod) {
+        for (const scene::Mesh& mesh : m.meshes)
+            if (mesh.lod == lod && mesh.name.rfind("wheel_fl_tyre", 0) == 0)
+                for (const scene::Primitive& p : mesh.primitives)
+                    if (p.texture >= 0) return m.textures.at(size_t(p.texture)).rgba;
+        return std::vector<u32>();
+    };
+    int asked = 0;
+    CarModelOptions menu_opt, race_opt, showroom_opt;
+    menu_opt.menu_tyres = true;
+    menu_opt.other_tyre = [&] { return ++asked, race_tyre(read, model); };
+    race_opt.lod = -1;
+    showroom_opt = race_opt;
+    race_opt.other_tyre = [&] { return ++asked, menu_tyre(read, model); };
+    showroom_opt.showroom_car = *menu;
+    struct Shown {
+        std::vector<u32> menu, race, near, far; // near, far: levels 0 and 1 of the race with showroom wheels
+    };
+    const auto shown = [&] {
+        const scene::Model r = load_car_model(*race, race_opt, model), s = load_car_model(*race, showroom_opt, model);
+        return Shown{tyre(load_car_model(*menu, menu_opt, model), 0), tyre(r, 0), tyre(s, 0), tyre(s, 1)};
+    };
+    const Shown disc_own = shown();
+    CHECK(!disc_own.menu.empty() && !disc_own.race.empty() && disc_own.menu == disc_own.near && disc_own.race == disc_own.far);
+    CHECK(asked == 0); // no pack: the other file is not read
+    {
+        auto pack = std::make_shared<texture_pack::Pack>();
+        pack->add_file(race_key, green_png);
+        PackScope scope(pack);
+        const Shown s = shown();
+        CHECK(s.menu == green && s.race == green && s.near == green && s.far == green);
+    }
+    {
+        auto pack = std::make_shared<texture_pack::Pack>();
+        pack->add_file(menu_key, blue_png);
+        PackScope scope(pack);
+        const Shown s = shown();
+        CHECK(s.menu == blue && s.race == blue && s.near == blue && s.far == blue);
+    }
+    {
+        auto pack = std::make_shared<texture_pack::Pack>();
+        pack->add_file(race_key, green_png);
+        pack->add_file(menu_key, blue_png);
+        PackScope scope(pack);
+        asked = 0;
+        const Shown s = shown();
+        CHECK(s.menu == blue && s.race == green && s.near == blue && s.far == green);
+        CHECK(asked == 0); // each has its own
+    }
+    {
+        auto pack = std::make_shared<texture_pack::Pack>();
+        pack->add_file(race_key ^ menu_key, green_png); // some other texture's
+        PackScope scope(pack);
+        const Shown s = shown();
+        CHECK(s.menu == disc_own.menu && s.race == disc_own.race && s.near == disc_own.near && s.far == disc_own.far);
+    }
 }
 
 TEST(texture_pack_disc_car) {

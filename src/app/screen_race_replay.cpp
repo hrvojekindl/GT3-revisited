@@ -376,7 +376,10 @@ void RaceScreen::avant_garde_frame() {
     const bool field = field_ && !two_player_ && (replaying_ || attract_);
     std::vector<ReplayDirector::FieldCar> cars;
     const int own_mounts = car_visual_ ? int(car_visual_->mounts().size()) : 0;
-    cars.push_back({track_->distance_of(render_state_.position), lap_count(), render_state_.speed_kmh / 3.6f, own_mounts});
+    // Distance and lap from the same physics step, as the opponents' (the drawn car's distance and the
+    // counter disagree for a frame at the line).
+    const sim::VehicleState& own = vehicle_->state();
+    cars.push_back({track_->distance_of(own.position), lap_count(), own.speed_kmh / 3.6f, own_mounts});
     if (field)
         for (int i = 0; i < field_->opponents(); ++i) {
             const sim::VehicleState& o = field_->opponent_state(i);
@@ -404,11 +407,11 @@ void RaceScreen::step_dissolve() { dissolve_.step(); }
 // The pad during a replay (presentation §G3; the original's race input maps only Up, Down,
 // Left, Right, Cross, Circle, L1 and R1 there). View modes 0, 3 and 2 with TARGET MANUAL: Up /
 // Down the next / previous car; modes 0, 2 and 3: Cross the driver's view on / off (the view
-// the player last drove with, on the followed car); mode 1: Cross, Circle, L1 and R1 a new cut,
-// Up / Down the level of the music's marked sections, Right / Left the music-timed cuts on /
-// off (§G3). Nothing changes the view mode: REPLAY OPTIONS does. The buttons are the pad's
-// own (the menu pad, a DualShock 2's), not the race layout's actions: a trigger bound to
-// accelerate is still R2 here.
+// the player last drove with, on the followed car; demonstrations too, play mode 2); mode 1:
+// Cross, Circle, L1 and R1 a new cut, Up / Down the level of the music's marked sections,
+// Right / Left the music-timed cuts on / off (§G3). Nothing changes the view mode: REPLAY
+// OPTIONS does. The buttons are the pad's own (the menu pad, a DualShock 2's), not the race
+// layout's actions: a trigger bound to accelerate is still R2 here.
 void RaceScreen::replay_pad(const MenuInput& m) {
     const ReplaySettings& vs = view_settings();
     if (vs.mode == 1) {
@@ -425,7 +428,7 @@ void RaceScreen::replay_pad(const MenuInput& m) {
         if (m.pressed(PadButton::Up)) focus_step_ = 1;
         else if (m.pressed(PadButton::Down)) focus_step_ = -1;
     }
-    if (m.pressed(PadButton::Cross) && (replaying_ || race_preview_)) {
+    if (m.pressed(PadButton::Cross) && (replaying_ || demo_replay() || race_preview_)) {
         driver_view_ = !driver_view_;
         camera_.set_mode(driver_view_ ? drive_camera_ : CameraMode::Tv);
         if (!driver_view_) { // back to the replay cameras: a new shot
@@ -441,7 +444,7 @@ void RaceScreen::replay_pad(const MenuInput& m) {
 void RaceScreen::begin_replay_focus() {
     focus_.begin();
     replay_focus_ = -1;
-    replay_partner_ = -1;
+    replay_partner_ = onboard_partner_ = -1;
     aim_from_ = aim_from_partner_ = -1;
     aim_left_ = aim_total_ = 0;
     focus_acc_ = 0;
@@ -474,6 +477,8 @@ std::vector<ReplayFocus::Car> RaceScreen::focus_cars() const {
 // The cameras follow `car` (0 the player's, i the opponent i - 1) and aim between it and
 // `partner` (-1 none), moving there from the last target over min(frames, 60) frames.
 void RaceScreen::follow(int car, int partner, int frames) {
+    // (A new target while the aim still moves re-arms the shot: fn_001FF490's answer, modes 0, 2 and 3.)
+    if (aim_left_ > 0 && view_settings().mode != 1) director_.reset();
     if (frames > 1) {
         aim_from_ = replay_focus_ + 1, aim_from_partner_ = replay_partner_;
         aim_total_ = aim_left_ = std::min(frames, 60);
@@ -482,9 +487,10 @@ void RaceScreen::follow(int car, int partner, int frames) {
     }
     if (car - 1 != replay_focus_ || partner != replay_partner_)
         LOG_INFO("Replay cameras: car %d, partner %d (race time %.1f s)", car, partner, field_ ? field_->race_time() : 0.0);
+    const bool new_car = car - 1 != replay_focus_;
     replay_focus_ = car - 1;
     replay_partner_ = partner;
-    director_.target_set();
+    director_.target_set(new_car);
 }
 
 // One 60 Hz frame of the followed car's logic by view mode (presentation §G3).
@@ -515,8 +521,12 @@ void RaceScreen::step_replay_focus() {
         if (next >= 0 && next != followed) {
             follow(next, focus_.partner(next), 120);
             focus_.set_hold(next, 120);
-            if (manual) director_.car_changed(120.0 / 60.0, true); // a new shot for the new car
-            else director_.target_switched();
+            if (manual) { // a new shot for the new car
+                director_.car_changed(60.0 / 60.0, true);
+                director_.reset();
+            } else {
+                director_.target_switched();
+            }
         } else if (focus_.battle_changed(followed)) {
             follow(followed, focus_.partner(followed), 120);
             focus_.set_hold(followed, 120);
@@ -533,8 +543,9 @@ void RaceScreen::step_replay_focus() {
         if (next >= 0 && next != followed) {
             follow(next, -1, 15);
             focus_.set_hold(next, 15);
-            if (manual) { // a new shot for the new car, with a 1 s dissolve (presentation §G16)
+            if (manual) { // a 1 s dissolve (presentation §G16), and a new shot when the car is outside this one
                 director_.car_changed(step != 0 ? 15.0 / 60.0 : 0.0, step == 0);
+                if (start_hold()) director_.reset();
                 start_dissolve(1.0f);
             }
         }
@@ -554,7 +565,7 @@ void RaceScreen::update_replay_focus(double dt) {
         }
         if (focus_acc_ > 1.0) focus_acc_ = 0;
     }
-    if (driver_view_ && (replaying_ || race_preview_)) { // (view mode 1 keeps its own cameras)
+    if (driver_view_ && (replaying_ || demo_replay() || race_preview_)) { // (view mode 1 keeps its own cameras)
         const CameraMode want = view_settings().mode != 1 ? drive_camera_ : CameraMode::Tv;
         if (camera_.mode() != want) camera_.set_mode(want);
     }
@@ -576,20 +587,31 @@ void RaceScreen::aim_replay_camera() {
     auto aim_of = [&](int car, int partner) { return partner >= 0 ? (pos(car) + pos(partner)) * 0.5f : pos(car); };
     const int car = replay_focus_ + 1, partner = replay_partner_ >= 0 && replay_partner_ < n ? replay_partner_ : -1;
     render::Vec3 aim = aim_of(car, partner);
-    if (aim_left_ > 0 && aim_total_ > 0 && aim_from_ >= 0 && aim_from_ < n) {
-        const float t = float(aim_left_) / float(aim_total_), e = t * t * (3.0f - 2.0f * t);
+    director_.set_settled_aim(aim);
+    // The move's part left, between its 60 Hz frames too (at another frame rate its steps would
+    // come unevenly, and the camera's lead on the aim would show them).
+    const bool moving = aim_left_ > 0 && aim_total_ > 0;
+    const float left = moving ? std::clamp(float((double(aim_left_) - focus_acc_) / double(aim_total_)), 0.0f, 1.0f) : 0.0f;
+    if (moving && aim_from_ >= 0 && aim_from_ < n) {
+        const float t = left, e = t * t * (3.0f - 2.0f * t);
         const int from_partner = aim_from_partner_ >= 0 && aim_from_partner_ < n ? aim_from_partner_ : -1;
         aim = aim * (1.0f - e) + aim_of(aim_from_, from_partner) * e;
     }
     director_.set_pair(partner >= 0);
-    if (partner < 0) {
-        camera_.set_replay_aim(aim, nullptr, nullptr, 0);
-        return;
+    // The zoom spring's inward pull follows the aim's move (1 with a pair, fn_001FF5F8).
+    director_.set_aim_progress(partner >= 0 || !moving ? 1.0f : 1.0f - left);
+    // Mode 2's on-board cut stays on the car it took when the battle ends meanwhile.
+    if (!director_.on_partner()) onboard_partner_ = partner;
+    const int ride = onboard_partner_ >= 0 && onboard_partner_ < n ? onboard_partner_ : -1;
+    ReplayDirector::Pair pair;
+    if (partner >= 0) pair = {pos(car), pos(partner)};
+    sim::VehicleState rs;
+    float length = 0;
+    if (ride >= 0) {
+        rs = state(ride);
+        length = ride == 0 ? vehicle_->setup().length : field_->opponent_setup(ride - 1).length;
     }
-    const ReplayDirector::Pair pair{pos(car), pos(partner)};
-    const sim::VehicleState ps = state(partner);
-    const float length = partner == 0 ? vehicle_->setup().length : field_->opponent_setup(partner - 1).length;
-    camera_.set_replay_aim(aim, &pair, &ps, length);
+    camera_.set_replay_aim(aim, partner >= 0 ? &pair : nullptr, ride >= 0 ? &rs : nullptr, length);
 }
 
 void RaceScreen::update_race_camera(const PadState& pad, double dt) {

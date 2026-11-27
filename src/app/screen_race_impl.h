@@ -29,6 +29,7 @@
 #include "race/backend.h"
 #include "race/camera_rig.h"
 #include "race/controls.h"
+#include "race/custom_paints.h"
 #include "race/field.h"
 #include "race/scenery_fade.h"
 #include "race/exact_field.h"
@@ -303,6 +304,7 @@ private:
     struct ShowroomFiles {
         std::optional<Bytes> car, wheel;
         std::function<std::optional<Bytes>()> stand_in;
+        std::function<std::optional<Bytes>()> tyre; // CarModelOptions::other_tyre
         ByteSpan car_span() const { return car ? ByteSpan(*car) : ByteSpan{}; }
         ByteSpan wheel_span() const { return wheel ? ByteSpan(*wheel) : ByteSpan{}; }
     };
@@ -324,7 +326,7 @@ private:
     }
     // A live view: not a replay, demonstration, attract demo or menu backdrop.
     bool live_view() const { return !replaying_ && !demo_ && !attract_ && !backdrop_; }
-    // The camera manager's live handler (start.cam over a standing hold, else the driver's camera): live views,
+    // The camera manager's live handler (0x20B788: start.cam over a standing hold, else the driver's camera): live views,
     // the licence menu's preview box and the quick menus' races, whose records off leave the camera's view without the
     // race's input (presentation §A8c).
     bool live_camera() const { return live_view() || preview_ || backdrop_; }
@@ -466,6 +468,8 @@ private:
     void draw_song(Ui& ui, bool controls);
     void update_course_ambience(App& app);
     // Every car's tyre loops and the followed cars' collision one-shots, each physics step (sound §7.6).
+    // One race step of every car's look that runs with the race (CarVisual::step_look: the pod's face animations).
+    void step_car_looks(float seconds);
     void update_tyre_sounds(App& app, const sim::VehicleState& s);
     // The race sounds' listener on camera_ (sound §6-§8): its eye and axes, the eye's velocity (the
     // listener's motion for the Doppler), the camera's sound kind and its target, the car it
@@ -799,6 +803,12 @@ private:
     mutable std::vector<int> lamp_index_;
     BrakeLamps brake_lamps_;
     std::string car_folder_ = "cars/day/"; // the course's car time of day (day / eve / night)
+    // The same as a CarScene (which body a mod car with several draws).
+    data::CarScene car_scene() const {
+        return car_folder_ == "cars/eve/"     ? data::CarScene::Eve
+               : car_folder_ == "cars/night/" ? data::CarScene::Night
+                                              : data::CarScene::Day;
+    }
     CarLampGlows car_lamps_;
     WetRoad wet_;                                // the wet-road reflection pass (course slots 9 / 13)
     std::vector<render::DrawItem> wet_items_;    // its buffer's scene
@@ -881,6 +891,7 @@ private:
     // 1 / Down -1) for the next focus frame, Cross's driver's view, the attract demo's car clock
     // (modes 0 / 3).
     int replay_partner_ = -1;
+    int onboard_partner_ = -1; // the car mode 2's on-board cut rides (the partner while none runs)
     race::ReplayFocus focus_;
     double focus_acc_ = 0;
     int aim_from_ = -1, aim_from_partner_ = -1, aim_left_ = 0, aim_total_ = 0;
@@ -949,9 +960,9 @@ private:
     bool pod_intro_posted_ = false;
     int pod_prompt(int player = 0) const;
     // A player's car disqualified at the line (the race's event 11 on its car: the pod display's examination message,
-    // simple exam display, race::ConceptExamMessage): seconds since, -1 none. One player: the disc's
+    // SimpleExamDisplay, race::ConceptExamMessage): seconds since, -1 none. One player: the disc's
     // RACEDISPLAY_Disqualification fades in, is held and fades out, with the fail jingle, then the race ends (event 1);
-    // two players: each half's message stays once held (no jingle), and the race ends once both are (two-player pod race display).
+    // two players: each half's message stays once held (no jingle), and the race ends once both are (RacePOD2PDisplay).
     std::array<double, 2> pod_dq_t_{-1.0, -1.0};
     bool pod_disqualified() const { return !two_player_ && pod_dq_t_[0] >= 0; }
     // The display's step (1: the step of the disqualification, its stage 1).
@@ -1067,6 +1078,8 @@ private:
     // 2P battle (split screen): player 2 drives the field's second car with pad 2.
     bool two_player_ = false;
     OpponentEngines opp_engines_;
+    // This start's engine bank files, each read once (start, load_opponent_cars).
+    EngineBanks engine_banks_;
     RaceSfx sfx_;
     CarSfx car_sfx_, car_sfx2_;
     std::vector<CarSfx> opp_sfx_; // every other car's tyre loops (sound §7.6)
@@ -1114,6 +1127,10 @@ private:
     std::vector<std::string> race_opponent_skills_;
     bool race_no_rubber_band_ = false;
     int race_chosen_laps_ = 0, race_player_slot_ = -1;
+    bool race_big_field_ = false; // GameRequest::big_field
+    // A field of ours (Quick race's custom race, a mod event: data::kModEventPrefix), as big as the player or the mod made it, up
+    // to sim::exact::kMaxCars cars, the grid past the course's made (FieldConfig::made_grid).
+    bool own_field() const { return race_big_field_ || (!race_event_.empty() && race_event_[0] == data::kModEventPrefix); }
     bool field_grid_by_power_ = false; // the field's rules (recorded in replays)
     ReplayBattle battle_; // 2P battle: the field's set-up (recorded in replays)
     int race_laps_ = 0;
@@ -1141,7 +1158,7 @@ private:
     std::array<LapList, 2> lap_lists_{};
     long long session_best_ms_ = -1;
     std::string license_event_;   // licence test event ("" = not a licence test)
-    // Gran Turismo Concept's course license with the pace car (concept §9.2, race training): the test with one computer car,
+    // Gran Turismo Concept's course license with the pace car (concept §9.2, RaceTraining): the test with one computer car,
     // the event pool's third entry, under the pace-car conductor (sim::exact::Conductor::Training).
     bool pace_car_ = false;
     u32 event_paint_id_ = 0xFFFFFFFFu; // licence test, attract demo: the slot-0 car's colour id (0xFFFFFFFF = none)

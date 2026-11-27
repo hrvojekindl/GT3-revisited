@@ -197,7 +197,8 @@ recorded frame, where its replay ends (`DemoReplay::run_out`, test
 (`start_preview`); after a run left with the pause window's EXIT, and after
 DEMONSTRATION, it shows the demonstration again (§A8). It is seen as the race
 behind the other quick menus is (§C5): from the driver's camera, with the start
-shot over a standing start's hold.
+shot over a standing start's hold. Like the race, it renders the car's
+reflection map around the car every frame, from the first frame on.
 The box is silent, like the race behind every quick menu: only the menu's music
 and sounds play. What the other quick menus draw behind them is in §C5.
 
@@ -1602,7 +1603,7 @@ is the view's reset (§H8; in mode 1 a cut at once).
   turn on board or a re-arm, §H8) the director draws, and with p = 0.07, while
   the followed car has a battle partner (§G3), the camera turns on board the
   partner's car (a bumper view: 0.62 m up, 0.15 m behind the nose, vertical FOV
-  0.9 rad). That on-board cut lasts until the shot ends (§H8): the course record
+  0.9 rad; the partner's car is not drawn, as on every on-board mount). That on-board cut lasts until the shot ends (§H8): the course record
   under it runs out and the gate opens, or a new target is set (a new followed
   car or partner, §G3). Without a partner it never cuts on board. It frames the
   followed car with its partner (§G3).
@@ -1661,12 +1662,13 @@ keep each player's car: none of this applies to them.
 opens the pause, §E2):
 
 - **Up / Down** (modes 0 and 3, and mode 2 with TARGET MANUAL): the next /
-  previous car, wrapping, with a new shot for the new car (below, §H8).
+  previous car, wrapping (below, §H8).
 - **Cross** (modes 0, 2 and 3): the driver's view on the followed car (the view
   the player last drove with) and back. The view sits at that car's own camera
   points (its in-car eye, its chase point: `CameraRig::set_car_mounts`, bound
   with the camera's car), and in the in-car view that car is not drawn. Back on the replay cameras the view's
   reset re-arms the shot (§H8). A new or restarted replay starts on the replay cameras.
+  Licence and time-trial demonstrations take Cross the same way.
 - **Cross, Circle, L1, R1** (mode 1): a new cut (§G2).
 - **Up / Down** (mode 1): the race-sound level inside the sections the music
   marks, +0.1 / -0.1, kept in 0 .. 1 (`CutClock::step_level`). Outside such
@@ -1689,10 +1691,12 @@ trigger bound to accelerate is still R2 in a replay.
 **By view mode.**
 
 - **Modes 0 and 3.** MANUAL only, never a partner. A new car is aimed at over
-  15 frames and held 15 frames. Up / Down re-arm the shot for the new car (§H8):
-  a shot that has run out for it gives way to the record at the new car's D
-  whatever its progress, else the camera turns on board; for 15 frames after the
-  change a cut may take a record at any progress. The attract demo in mode 0 moves to
+  15 frames and held 15 frames. Up / Down: a shot the new car is inside of goes
+  on, the aim moving to it; one it is outside of gives way to the record at the new
+  car's D whatever its progress, else the camera turns on board (§H8). In the
+  standing-start hold the shot is always re-armed. For the aim's 15 frames a cut may
+  take a record at any progress; once a new shot has ended the move, until the next
+  change of target (`ReplayDirector::car_changed`). The attract demo in mode 0 moves to
   the next car once 300 frames (5 s) have passed and
   the current shot's gate is open (§H8: in mode 0, once the shot has run out
   and any 3 s hold is over), then counts the 300 frames again; its new shot is
@@ -1703,8 +1707,8 @@ trigger bound to accelerate is still R2 in a replay.
   frames.
 - **Mode 2.** MANUAL: Up / Down change the car; the new car is framed with its
   partner, aimed at over 60 frames and held 120 frames, and its new shot is
-  searched at once (§H8), the current record included, at any progress for the
-  next 120 frames. TOP / AUTO: when the interest scores want another car (below),
+  searched at once (§H8), the current record included, at any progress until the
+  next change of target. TOP / AUTO: when the interest scores want another car (below),
   the cameras switch to it once the course camera's shot (or its turn on board)
   is 180 frames (3 s) old (`ReplayDirector::camera_fresh`), the followed car's
   hold is over, and the switch gate is open: the shot is over, or the shot length
@@ -1712,9 +1716,18 @@ trigger bound to accelerate is still R2 in a replay.
   §G14). The aim moves to the new car (and its partner) over 60 frames, and the
   new car is held 120 frames (2 s). The switch sets a new target: a shot the new
   car is outside of, an on-board shot or a 0x400 record ends and a new one is
-  searched at once (§H8); otherwise the shot goes on. When the followed car's
-  battle begins or ends, the aim moves likewise, the car is held 120 frames and
-  the new target ends an on-board or 0x400 shot (re-armed, §H8).
+  searched at once (§H8), and so does one the new car is far off the view of
+  (`ReplayDirector::off_view`: more than 180 / zoom degrees across or 135 / zoom up
+  or down from where the camera looks); otherwise the shot goes on. When the followed
+  car's battle begins or ends, the aim moves likewise and the car is held 120 frames;
+  the shot goes on (an on-board cut stays on the car it took).
+
+**The aim's move and the shots** (issue 442). A new shot of modes 0, 2 and 3 ends the
+aim's move: its first frame aims at the new target itself (`set_settled_aim`,
+`take_aim_cut`). A new target while the aim still moves re-arms the shot. Another car as
+the target (`target_set(true)`, or any other car tried by a mode-1 cut) forgets the last
+aim point, so the next shot's filters start still (§H6a). The move runs between its 60 Hz
+frames at other frame rates (`RaceScreen::aim_replay_camera`).
 
 A held car's battle state stands still, and in mode 2 a held car is not left
 for a TOP / AUTO pick. The aim moves from the last target eased by 3t^2 - 2t^3.
@@ -2324,7 +2337,7 @@ the view does not judder.
   - Look back takes over while held. No mirror while the view is turned more
     than 0.35 rad (20°) to the side.
   - On phones a drag on the open screen, away from the controls, does the same.
-- **Rear-view mirror** (in-car views, not in replays, not while looking back or
+- **Rear-view mirror** (in-car views, not in replays or demonstrations, not while looking back or
   turned to the side):
   - **Placement.** A 240 x 64 rectangle at (200, 20) of the frame (pushed by
     106.667 in 16:9) with a 1-unit black outline. On a 4:3 2P half it is
@@ -2408,7 +2421,13 @@ attract demo.
   start on, cover the start and run on across the line; then
   k = ((lap - 1) mod nvar) + 1 (`GtrcScript::lap_variant`). This gives
   consecutive laps different cuts. Trial Mountain has 66 records and 3 variants
-  (test `race_replay_cameras`).
+  (test `race_replay_cameras`). Ours draws the car between physics steps, so its
+  drawn s and its lap counter (stepped on the physics step that crosses the line)
+  disagree for a frame at the line; the lap the cameras use steps as the drawn s
+  wraps (`ReplayDirector::seam_lap`, test `replay_director_seam_lap`), and mode 1's
+  cuts take the player's s from the same physics step as its lap. Otherwise that
+  frame put the shot a lap off: a stray cut for a frame or two, then on board
+  (issue 402).
 - **The records at D** (`GtrcScript::records_at`, test `race_replay_lap_variants`).
   Only the last record starting at or before D counts, when D is before its end
   (an earlier record that also contains D is not found). When that is the list's
@@ -2434,8 +2453,8 @@ attract demo.
   - Eye and target come from the curves (or the car, see the kind bits).
   - The zoom is clamped to the record's limits (when max > min) and kept at 0.2
     or more.
-  - The zoom is smoothed towards that value at 4 per second, snapping on a cut.
-    The rate is approximate: the game's is not known.
+  - The zoom moves towards that value on a spring (§H6a), set on a shot's first
+    frame.
 - **Field of view.** The zoom is 1 / tan of the horizontal half-angle across the
   640-pixel frame; on the 448-line frame that gives vertical FOV
   = 2 atan(0.7 / zoom) (`ReplayDirector::zoom_fovy`), as for the player views
@@ -2457,6 +2476,48 @@ point midway between the two, with the shot widened (§G3). Mode 1's procedural
 cameras follow the cut's car alone (§G15). The test reports 197 shots over a
 Trial Mountain lap (lap 1) sampled every 20 m, 190 of them within 160 m of the
 car.
+
+### §H6a The camera operator
+
+A course shot does not hold the car dead centre. Every 60 Hz frame of a course shot
+(any view mode; `race::CourseCameraAim`, `ReplayDirector::evaluate`, test
+`course_camera_aim_*`), angles in degrees, yaw = 180 - atan2(x, z) and pitch =
+-atan2(y, |xz|) (positive looks down) of the direction to the aim point:
+
+- **The shot's first frame** (a cut, or the record set again): the zoom is set to the
+  record's (mode 1's wide shot: 1.0) and each angle's filter is reset to the angle of
+  the aim point now, turning at (now - target) degrees per second, where the target is
+  the angle of last frame's aim point (without its 0.4 m lift) while the cameras follow
+  the same car, else the angle now; mode 1's yaw seed (§G2) adds -90 .. -30 degrees to
+  the yaw target, so the camera starts by swinging off and back. The pitch filter of a
+  record looking at the car aims 0.4 k cos(pitch) degrees higher, k = 30 / zoom: the
+  car sits about a quarter of the half-height below the middle of the picture.
+- **Records looking at the car**, every later frame, for each angle θ (the pitch less
+  0.4 k cos θ):
+  - the lead: θ + 5 Δ, Δ its change since the last frame, led on by
+    k (2u - u²), u = min(5 |Δ| / 3k, 1), in Δ's direction;
+  - the error: (lead - shown), the difference brought into -180 .. 180;
+  - the gain g = (n + 1) / 2 + 0.2, n a random spring's value (below), 0.2 .. 1.2;
+  - the speed v (degrees per second) changes by 2 (300 g e - 30 v) / 60, at most 25
+    either way, and stays within ±250; the angle shown moves by v / 60 (0 .. 360).
+  - The random spring chases targets in -76.8 .. 128 (shown / 128): every third frame
+    a new target with p 1 - (0.99333 - 0.1575 |a|) (a = 1: 16.4 %); the value moves by
+    v' += (60 (target - x) - 10 v') / 60, x += v' / 60. Each filter has its own, seeded
+    from a clock value at the shot's first frame.
+  - The bob: a third spring, its odds raised by a = the yaw's speed / 30 (clamped to
+    ±1), tips the pitch shown by (n / 3) min(k, 5) a degrees: up to 1.7 degrees while the
+    camera pans.
+- **Records aiming at their target curves**: the angles straight at the target.
+- **The zoom** springs towards the record's: v += (30 (want - zoom) p - 10 v) / 60
+  (p = 1 zooming out; zooming in, the aim's move between cars, 1 - frames left / its
+  frames, or 1 with a pair), v within -30 .. 10 per second, zoom += v / 60.
+- Ours steps at 60 Hz, each frame on the aim point and camera where they were at that
+  frame's moment (between the two shown frames around it), and blends the last two
+  frames between them, both angles the short way round (the pitch is 359.x one frame and
+  -0.x the next as the camera aims across level): shown frames at another rate or
+  unevenly paced (a phone missing refreshes) see the same camera as an even 60 Hz
+  (issue 402); the raw angles use
+  the host's atan2 (the program's 0x245C10 is not ported), the rest the EE's arithmetic.
 
 ### §H7 Fallback TV cameras
 

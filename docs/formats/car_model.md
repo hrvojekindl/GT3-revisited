@@ -100,8 +100,11 @@ F688/S and pd0001 of NTSC-U and NTSC-J make no sparks.
 Flags: bit 0 the race's tread blur (the texture redrawn as shifted copies while
 the wheel turns, see "Wheel spin blur"), bit 1 a symmetric tyre (below). On the disc
 (repeats, flags) are (2, 0) on 227 cars, (1, 1) on 52 and (1, 3) on 7. The
-`tire/n1..n49` files have the same structure; the embedded one equals
-`tire/n1`. There is no tyre geometry: the game builds it (see "Tyres" below,
+`tire/n1..n49` files have the same structure, and `menu/tire/n1..n49` hold the
+same pictures at the menus' size. On NTSC-U 1.10 each car's two embedded
+textures are those of one number (`tire/n1` on most), but for `fo0007` and
+`fo0030`, whose pair is in neither folder. A texture pack's picture for one of
+a car's two shows on both (ours; `CarModelOptions::other_tyre`). There is no tyre geometry: the game builds it (see "Tyres" below,
 `tyre_model.*`).
 
 ### GTTW (wheel) — also `wheel/<id>`
@@ -249,7 +252,18 @@ in their alpha (texel alpha 0 = hole, otherwise 0x21..0x80). The opaque body
 passes run with the alpha test (alpha > 0x20), which cuts the wheel arches,
 grilles and so on out of flat side panels; without it the wheels are hidden
 behind dark panels (the R34 front wheels, for example). The decoder applies the test as a binary-alpha copy of
-the texture plus `kAlphaTest` (`Options::program_alpha_test`). The opaque
+the texture plus `kAlphaTest` (`Options::program_alpha_test`). Many of these
+textures are sampled point-filtered (their Tex1 record's TEX1 has MMAG NEAREST, and
+the game sends it to the GS as stored), so the colour of a cut texel never shows, and
+some are keyed in a loud colour there (the Astra Touring Car's headlamp surrounds:
+pure red). We filter bilinearly, so the copy of such a texture gives its cut texels
+the colour of their nearest kept ones (`gtm1::colour_cut_texels`), across the
+texture's edge only where some face repeats it there. Faces whose UVs stay inside
+their texture on an axis (within a float step) sample it clamped on that axis
+(`gtm1::mark_inside_uvs`, `scene::kClampU` / `kClampV`, on every GTM1 model): the
+Astra's grille is two mirrored halves meeting on the texture's right edge, and
+repeating it there brought in the left edge's chrome as a white line down the
+middle (issue 409). The opaque
 passes also write the texel alpha to the frame buffer, and the
 reflection passes (normal in the UV slot, env map from a runtime slot) are
 blended Cs·Ad + Cd: reflection weighted by that alpha.
@@ -260,11 +274,15 @@ the renderer weights the reflection per pixel by its texel alpha. Where that pas
 is alpha-tested, its failing texels write nothing on the GS, so the alpha that lay
 there before stays: the primitive carries the test's reference and that earlier
 alpha (`scene::Primitive::under_ref` / `under_alpha`; the triangle's own under it,
-else the mean of its corners', in five steps), and the renderer weights texels at or
+else, where the triangle's texels include cut-out ones, the alpha of the nearest
+triangle an earlier pass wrote within 60 cm behind it (looking into the car), else
+the mean of its corners', in five steps), and the renderer weights texels at or
 below the reference with it. In the wheel arches that is
 usually 0, so the reflection doesn't haze over the wheels; in the windows the roof
 and pillar passes cut out, it is the alpha-only shell's 0x80 (the Alto Works,
-`sz0004`: issue 278). Otherwise, triangles whose three corners come from the same
+`sz0004`: issue 278) or the cabin's (the Celica GT-FOUR's rear window, `ty0028`:
+issue 378, where most of the frame's corners had nothing written and the glass went
+dark). Otherwise, triangles whose three corners come from the same
 textured pass get that pass's texture and UVs; the remaining triangles are
 untextured with a per-vertex weight. Matching corners alone took a triangle that
 spans two overlapping packets (the MR2 G-Limited's hood, `ty0076`) or a window cut
@@ -274,7 +292,15 @@ its windows draws on the frame alpha the shell wrote. Glass is a nearly uniform 
 with GS alpha ≈ 0x73, drawn with normal blending and the alpha channel
 write-masked, so it is ~90 % dark plus the reflection on top. The glass's own
 texture is used as its reflectivity because the real Ad (whatever lies
-behind it) is unknown, unless an alpha-only pass sets it.
+behind it) is unknown, unless an alpha-only pass sets it or an earlier reflection
+pass drew within 1 cm of it. Each reflection pass leaves Ad = 0x80 where it draws
+(its vertex alpha), so a later one over it adds at full weight. Checked in a GS dump
+of the original's race (Celica GT-FOUR, Super Speedway): after the window frame the
+alpha in its cut-out is the cabin's 0x80, the first reflection pass (DATE) draws
+nothing there, and the second one, over the glass 5 mm inside the first's triangles,
+adds at full weight. The Lancer Evolution VII's rear window (`mi0093`) shows the
+same rule the other way: with only the first pass over it, the glass shows the
+cabin with no reflection.
 
 Alpha-only passes (FBMSK 0x00FFFFFF; 69 draws on 62 models in `cars/day/`) are
 drawn over the glass before its reflection: the frame alpha they write (texel ×
@@ -463,6 +489,15 @@ y = (i >> 3) + (CSA >> 1)·2 of the 32-bit CLUT rect at CBP (width 1).
 `GsMemory::decode_rgba` ignores CSA, which made painted panels decode grey.
 `gtm1::decode_texture_set` has its own CSA-aware path for indexed textures with
 32-bit CLUTs.
+
+Every texture of every car (the bodies of `cars/day/`, `eve/`, `night/` and
+`menu/cars/`, and the rims of `wheel/`) has MXL 0 in its Tex1 record's TEX1: the
+GS samples the full-size image only. The car bodies are drawn that way
+(`gtm1::Options::gs_mip_levels`, `scene::Texture::no_mips`): mips would blend a
+packed picture with its neighbours far away (the 787B's windshield went the
+orange of the paint around it). Texture pack and livery pictures keep
+their mips, and so do the rims: our spin blur reads one (presentation §S). Courses differ: about 1,100 of their textures
+have MXL 1-3.
 
 **Paint.** Tex1 +0x20 is an offset (from the Tex1 start, 0 = none) to
 `u32 V; u32 variant_offsets[V]`, each variant `u32 n` (entry count in the low
@@ -719,7 +754,7 @@ their turn over part of the last frame:
   0x20, so a ring the spokes cover a quarter of turns solid). The other cars' rims show the
   wheel's spinning image (texture-LOD table entry 2) when |d| passes 3 degrees.
 
-## Callback morphs (mud flaps, aerials, steering)
+## Callback morphs (mud flaps, aerials, steering; the later builds' wings and pods)
 
 Seven cars draw parts with op 0x06 ids 1-5 followed by op 0x35 `base, count`: that id's value,
 clamped to 0..1, is the phase: chunk base + min(phase x count, count - 1), morphed towards its
@@ -745,10 +780,29 @@ second key frame by the fraction. The game's car code sets the values every fram
 
 Car models' +0x3C animators (type 7, mostly without targets) are never advanced by the game.
 
-Ours: `gtm1::RunParams::callback` (op 0x06 ids 1-5), `gtm1::MorphDraws` (`Options::morphs`,
-`CarModelOptions::morphs`: the draws left out of the body), the race's flap pendulums
-(physics §8.8) as `sim::WheelState::flap` / `VehicleState::steer`, `race::car_callback_values` and
-`race::CarVisual`'s morph models (one per drawing of the car, rebuilt when the values change).
+Gran Turismo Concept's car model callback (11 ids in every build) adds ids 6-10, each read with a
+branch (ids 1-6 always take branch 0):
+
+| id | value (the callback's field) | branch | phase |
+|---|---|---|---|
+| 6 | the active wing (+0x24) | 0 | the wing, 0 in .. 1 out |
+| 7 | the pod's tail: lean (+0x28), nod (+0x2C) | 0, or 1 while the lean is exactly 0.5 | the lean, or the nod in branch 1 |
+| 8 | the pod's lamps (+0x30 class, +0x34 fade) | the class | the fade's weight |
+| 9 | the pod's mood (+0x38) | the mood | - |
+| 10 | the pod's mood (+0x3C) | the mood | - (a new value restarts the model's CLUT animations of that group) |
+
+Before a race sets them: wing 0, lean and nod 0.5, class 0, ids 9 and 10 0 (the menus set id 10 to 1, then 0).
+The pod (ty0150) uses ids 0, 7, 8 and 10: its tail (chunks morphed by id 7, one per lamp class under id 8), the lamps'
+colour chunks (additive, ALPHA 0x48) under id 8 and its faces under id 10 (nothing for mood 0); every switch of these ids
+ends where its out-of-range jump goes, so all branches meet there. Its texture set 4 (drawn only under these branches)
+has 27 CLUT animations in groups 1-10.
+
+Ours: `gtm1::RunParams::callback` (`gtm1::CarCallback`, op 0x06 ids 1-10) and `every_branch` (each draw under ids
+7-10's branches tagged with them, `Draw::when`), `gtm1::MorphDraws` (`Options::morphs`, `CarModelOptions::morphs`: the
+draws left out of the body), `CarModelOptions::clut_sets`, the race's flap pendulums (physics §8.8) as
+`sim::WheelState::flap` / `VehicleState::steer` and the special cars' look as `VehicleState::special`,
+`race::car_callback_values` and `race::CarVisual`'s morph models (one per drawing of each car of the race, rebuilt when
+the values change, with their own copies of the animated textures: `CarVisual::step_look`).
 
 ## Open questions
 

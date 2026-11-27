@@ -1,14 +1,18 @@
 #include "formats/model/car_model.h"
 #include "formats/model/gltf.h"
+#include "formats/model/livery_transfer.h"
 
 #include "formats/model/rim_light.h"
 #include "formats/model/tyre_model.h"
 #include "formats/model/wheel_model.h"
+#include "formats/texture_pack.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <mutex>
 #include <utility>
 
 namespace gt3r {
@@ -132,6 +136,35 @@ std::vector<std::array<u32, 3>> car_spark_points(ByteSpan g) {
 
 namespace {
 
+// A GTTR section's texture set; empty when it has none.
+ByteSpan tyre_set(ByteSpan gttr) {
+    return gttr.size() > 0x20 && rd32(gttr, 0x1C) < gttr.size() ? gttr.subspan(rd32(gttr, 0x1C)) : ByteSpan{};
+}
+
+// Texture pack pictures for the tyre's textures (those from `first` on, as decoded): the picture
+// of the texture's own key, else the one of the same texture in the car's other file (`other`,
+// its GTTR: CarModelOptions::other_tyre), asked for only when a texture has none of its own.
+void replace_tyre(std::vector<scene::Texture>& textures, size_t first, const std::function<std::optional<Bytes>()>& other) {
+    const std::shared_ptr<const texture_pack::Pack> pack = texture_pack::current_pack();
+    if (!pack) return;
+    std::optional<std::vector<u64>> other_keys;
+    for (size_t i = first; i < textures.size(); ++i) {
+        scene::Texture& t = textures[i];
+        std::shared_ptr<const texture_pack::Image> r = texture_pack::replacement(t.width, t.height, t.rgba.data());
+        if (!r) {
+            if (!other_keys) {
+                other_keys.emplace();
+                try {
+                    if (std::optional<Bytes> gttr = other()) other_keys = texture_pack::keys_of_set(tyre_set(*gttr));
+                } catch (const std::exception&) { // no tyre there to go by
+                }
+            }
+            if (i - first < other_keys->size()) r = pack->find((*other_keys)[i - first]);
+        }
+        if (r) t.width = r->width, t.height = r->height, t.rgba = r->rgba, t.nearest = false;
+    }
+}
+
 // Appends `src` to `dst`, remapping texture indices.
 void merge(scene::Model& dst, scene::Model&& src) {
     int base = int(dst.textures.size());
@@ -144,20 +177,25 @@ void merge(scene::Model& dst, scene::Model&& src) {
 }
 
 scene::Model car_lod(const CarFile& f, const gtm1::Gtm1& g, const CarModelOptions& opt, int lod,
-                     const std::string& name, gtm1::MorphDraws* morphs) {
+                     const std::string& name, gtm1::MorphDraws* morphs, std::vector<gtm1::ClutSet>* clut_sets) {
     gtm1::Options o;
     o.run.lod = lod;
     o.run.brake = opt.brake;
-    o.run.callback = gtm1::kCarCallbackDefaults.data();
+    o.run.callback = &gtm1::kCarCallbackDefaults;
+    o.run.every_branch = morphs != nullptr; // (the draws under the callback's branches go with the morphs)
     o.morphs = morphs;
+    o.clut_sets = clut_sets;
     o.reflection = opt.reflection;
     // The menus' brake discs and calipers: nodes 2 (front) and 3 (rear) of a menu car's
     // body, drawn with the wheels. Race car files leave both empty.
     const bool brakes = opt.wheels && opt.menu_tyres;
     o.node = opt.effects || brakes || opt.floor_shadow ? -1 : 0;
     o.paint = opt.paint;
+    o.computed_paint = opt.computed_paint ? &*opt.computed_paint : nullptr;
+    o.livery = opt.livery.get();
     o.program_alpha_test = true;  // wheel-arch / grille cut-outs
     o.weighted_reflection = true; // reflection passes weighted by the body's texel alpha
+    o.gs_mip_levels = true;       // the full-size images only, as the GS samples them (MXL 0)
     scene::Model m = gtm1::build_model(g, o, name);
     std::array<std::vector<scene::Mesh>, 2> brake_parts;
     if (brakes || (opt.floor_shadow && !opt.effects)) {
@@ -232,9 +270,17 @@ scene::Model car_lod(const CarFile& f, const gtm1::Gtm1& g, const CarModelOption
         if (opt.even_menu_rim_light && from_menus) even_rim_light(wheel);
         int tyre_tex = -1;
         TyreShape tyre;
-        if (src.tire.size() > 0x20 && rd32(src.tire, 0x1C) < src.tire.size()) {
+        if (!tyre_set(src.tire).empty()) {
             size_t first = m.textures.size();
-            tyre_tex = gtm1::decode_texture_set(src.tire.subspan(rd32(src.tire, 0x1C)), m.textures, "tyre_");
+            tyre_tex = gtm1::decode_texture_set(tyre_set(src.tire), m.textures, "tyre_", 0, nullptr, false);
+            // The car's other file's tyre, when it is at hand (showroom wheels) or can be read.
+            replace_tyre(m.textures, first, [&]() -> std::optional<Bytes> {
+                if (menu_car) {
+                    const ByteSpan t = showroom ? f.tire : CarFile::parse(opt.showroom_car).tire;
+                    return Bytes(t.begin(), t.end());
+                }
+                return opt.other_tyre ? opt.other_tyre() : std::nullopt;
+            });
             // The game samples it repeating round the tyre, clamped across, without mipmaps.
             for (size_t t = first; t < m.textures.size(); ++t) {
                 m.textures[t].clamp_u = false, m.textures[t].clamp_v = true;
@@ -324,6 +370,8 @@ void apply_body_mod(scene::Model& m, const CarBodyMod& mod, const std::string& n
     if (!mod.glb) return;
     GlbOptions go;
     go.paint = mod.paint;
+    go.livery = mod.livery.get();
+    go.livery_paint = mod.livery_paint;
     scene::Model own = load_glb(*mod.glb, go, name);
     std::vector<int> lods;
     std::vector<scene::Mesh> kept;
@@ -355,11 +403,15 @@ void apply_body_mod(scene::Model& m, const CarBodyMod& mod, const std::string& n
 
 namespace {
 
-std::optional<Bytes> car_rim(const FileReader& read, const std::string& path) {
+std::optional<Bytes> car_section(const FileReader& read, const std::string& path, ByteSpan CarFile::* section) {
     std::optional<Bytes> car = read(path);
     if (!car || !CarFile::is_car(*car)) return std::nullopt;
-    const ByteSpan w = CarFile::parse(*car).wheel;
-    return Bytes(w.begin(), w.end());
+    const ByteSpan s = CarFile::parse(*car).*section;
+    return Bytes(s.begin(), s.end());
+}
+
+std::optional<Bytes> car_rim(const FileReader& read, const std::string& path) {
+    return car_section(read, path, &CarFile::wheel);
 }
 
 } // namespace
@@ -370,6 +422,14 @@ std::optional<Bytes> race_rim(const FileReader& read, const std::string& model, 
 
 std::optional<Bytes> menu_rim(const FileReader& read, const std::string& model, const std::string& wheel) {
     return wheel.empty() ? car_rim(read, "menu/cars/" + model) : read("menu/wheel/" + wheel);
+}
+
+std::optional<Bytes> race_tyre(const FileReader& read, const std::string& model) {
+    return car_section(read, "cars/day/" + model, &CarFile::tire);
+}
+
+std::optional<Bytes> menu_tyre(const FileReader& read, const std::string& model) {
+    return car_section(read, "menu/cars/" + model, &CarFile::tire);
 }
 
 void mark_car_glass(scene::Model& model) {
@@ -539,17 +599,71 @@ void mark_car_glass(scene::Model& model) {
     }
 }
 
-scene::Model load_car_model(ByteSpan data, const CarModelOptions& opt, const std::string& name) {
+namespace {
+std::mutex g_resolver_mutex;
+std::shared_ptr<const PaintResolver> g_resolver;
+} // namespace
+
+void set_paint_resolver(PaintResolver resolver) {
+    auto r = resolver ? std::make_shared<const PaintResolver>(std::move(resolver)) : nullptr;
+    std::lock_guard lock(g_resolver_mutex);
+    g_resolver = std::move(r);
+}
+
+std::optional<ResolvedPaint> resolve_paint(const std::string& model, int paint) {
+    std::shared_ptr<const PaintResolver> r;
+    {
+        std::lock_guard lock(g_resolver_mutex);
+        r = g_resolver;
+    }
+    return r && !model.empty() ? (*r)(model, paint) : std::nullopt;
+}
+
+scene::Model load_car_model(ByteSpan data, const CarModelOptions& opt_in, const std::string& name) {
+    // A custom colour's index: resolved once for every LOD (the finish paint where none is installed).
+    CarModelOptions resolved;
+    // A mod car's are under its own name; a glTF body has taken its colour and livery already (body_mod_for_car).
+    const CarBodyMod& bm = opt_in.body_mod;
+    const bool resolve =
+        opt_in.resolve_paint && !opt_in.computed_paint && !opt_in.livery && (!bm.active() || !bm.paint_key.empty());
+    std::optional<ResolvedPaint> rp =
+        resolve ? resolve_paint(bm.paint_key.empty() ? name : bm.paint_key, opt_in.paint) : std::nullopt;
+    if (rp) {
+        resolved = opt_in;
+        resolved.paint = rp->paint;
+        if (!bm.glb) {
+            resolved.computed_paint = std::move(rp->computed);
+            resolved.livery = std::move(rp->livery);
+        }
+    }
+    const CarModelOptions& opt = rp ? resolved : opt_in;
+    // A livery reaches the lower-detail models through the full-detail body (formats/model/livery_transfer.h).
+    auto carry_livery = [&](scene::Model& m) {
+        if (!opt.livery || opt.body_mod.glb) return;
+        if (std::none_of(m.meshes.begin(), m.meshes.end(), [](const scene::Mesh& x) { return x.lod >= 1; })) return;
+        CarModelOptions r;
+        r.lod = 0;
+        r.wheels = false;
+        r.reflection = false;
+        r.paint = opt.paint;
+        r.computed_paint = opt.computed_paint;
+        r.livery = opt.livery;
+        r.resolve_paint = false;
+        r.body_mod.fit = opt.body_mod.fit; // (a stretched shell: both in the same shape)
+        livery_transfer::apply(m, load_car_model(data, r, name));
+    };
     CarFile f = CarFile::parse(data);
     gtm1::Gtm1 g = gtm1::Gtm1::parse(f.body);
     // (Mod bodies keep the morph draws in place: their parts would not follow the new body.)
     const bool morphs = opt.morphs && !opt.body_mod.active();
     if (morphs) opt.morphs->clear();
+    if (opt.clut_sets) opt.clut_sets->clear();
     if (opt.lod >= 0) {
         gtm1::MorphDraws md;
-        scene::Model m = car_lod(f, g, opt, opt.lod, name, morphs ? &md : nullptr);
+        scene::Model m = car_lod(f, g, opt, opt.lod, name, morphs ? &md : nullptr, opt.clut_sets);
         mark_car_glass(m);
         if (opt.body_mod.active()) apply_body_mod(m, opt.body_mod, name);
+        carry_livery(m);
         m.compute_bounds();
         if (!md.empty()) opt.morphs->push_back(std::move(md));
         return m;
@@ -560,15 +674,21 @@ scene::Model load_car_model(ByteSpan data, const CarModelOptions& opt, const std
     for (int lod = 0; lod < n; ++lod) {
         gtm1::MorphDraws md;
         const int base = int(all.textures.size());
-        scene::Model m = car_lod(f, g, opt, lod, name, morphs ? &md : nullptr);
+        std::vector<gtm1::ClutSet> cluts;
+        scene::Model m = car_lod(f, g, opt, lod, name, morphs ? &md : nullptr, opt.clut_sets ? &cluts : nullptr);
         mark_car_glass(m);
         merge(all, std::move(m));
+        for (gtm1::ClutSet& c : cluts) {
+            c.first += base;
+            opt.clut_sets->push_back(std::move(c));
+        }
         if (!md.empty()) {
             md.rebase_textures(base);
             opt.morphs->push_back(std::move(md));
         }
     }
     if (opt.body_mod.active()) apply_body_mod(all, opt.body_mod, name);
+    carry_livery(all);
     all.compute_bounds();
     return all;
 }

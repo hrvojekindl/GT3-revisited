@@ -8,6 +8,7 @@
 #include "base/sha256.h"
 #include "disc/disc.h"
 #include "disc/volume.h"
+#include "formats/model/gltf.h"
 #include "formats/png_writer.h"
 #include "game/data/car_database.h"
 #include "game/mod_package.h"
@@ -525,8 +526,8 @@ TEST(net_old_protocol_told_to_update) {
         while (size_t n = old.recv_from(from, buf, sizeof buf)) reply.append(reinterpret_cast<const char*>(buf), n);
         return reply.find("update") != std::string::npos;
     }));
-    CHECK(reply.find("update required: the host has a newer version of the game (online protocol 5, yours 3)") !=
-          std::string::npos);
+    CHECK(reply.find("update required: the host has a newer version of the game (online protocol " +
+                     std::to_string(net::kProtocolVersion) + ", yours 3)") != std::string::npos);
     CHECK(host.players().size() == 1); // not let in
     // The other way round: a newer game is told the host must update.
     CHECK(net::protocol_mismatch(net::kProtocolVersion + 1).find("the host needs to update") != std::string::npos);
@@ -1354,6 +1355,15 @@ Bytes tiny_glb(u32 texture_dim = 0) {
     return glb;
 }
 
+struct ModPackageFileFinder {
+    const game::ModPackage& p;
+    Bytes operator()(const std::string& path) const {
+        for (const game::ModPackage::File& f : p.files)
+            if (f.path == path) return f.data;
+        return {};
+    }
+};
+
 game::ModPackage ev_package(const std::string& extra = "") {
     game::ModPackage p;
     p.label = "online_test_ev";
@@ -1399,6 +1409,25 @@ TEST(net_mod_package_validation_disc) {
         p.files[0].data.assign(ini.begin(), ini.end());
         refuses(p, "online_test_ev", "donor not on this disc");
     }
+    // A menu model and a race model (issue 412): both bodies go, and a key that no scene draws
+    // (`file`, overridden by both) names no file.
+    {
+        game::ModPackage p = ev_package("[model]\nrace = models/race.glb\n");
+        p.files.push_back({"models/race.glb", tiny_glb()});
+        ok = game::validate_mod_package(p, db, "online_test_ev", &err);
+        if (!ok) std::printf("  file + race package refused: %s\n", err.c_str());
+        CHECK(ok);
+        p.files.pop_back();
+        refuses(p, "online_test_ev", "race body missing");
+        p = ev_package("[model]\nmenu = models/menu.glb\nrace = models/race.glb\n");
+        p.files[1].path = "models/menu.glb";
+        p.files.push_back({"models/race.glb", tiny_glb()});
+        ok = game::validate_mod_package(p, db, "online_test_ev", &err);
+        if (!ok) std::printf("  menu + race package refused: %s\n", err.c_str());
+        CHECK(ok);
+        p.files.push_back({"models/body.glb", tiny_glb()});
+        refuses(p, "online_test_ev", "body no scene draws");
+    }
     // Install: the files land in mods/dl-<hash>/ and nowhere else.
     std::string dir = test::temp_path("mods").string();
     std::string hash = sha256_hex(game::serialize_mod_package(good));
@@ -1407,6 +1436,13 @@ TEST(net_mod_package_validation_disc) {
     if (where) {
         CHECK(read_host_file(*where + "/cars/online_test_ev.ini").has_value());
         CHECK(read_host_file(*where + "/models/body.glb").has_value());
+        // The body as our own encoding: it loads the same.
+        if (std::optional<Bytes> body = read_host_file(*where + "/models/body.glb")) {
+            const ModPackageFileFinder find{good};
+            const scene::Model sent = load_glb(find("models/body.glb")), kept = load_glb(*body);
+            CHECK(sent.meshes.size() == kept.meshes.size() && sent.textures.size() == kept.textures.size());
+            for (size_t i = 0; i < sent.textures.size() && i < kept.textures.size(); ++i) CHECK(sent.textures[i].rgba == kept.textures[i].rgba);
+        }
         std::optional<Bytes> mi = read_host_file(*where + "/mod.ini");
         CHECK(mi && std::string(mi->begin(), mi->end()).find("priority = -100") != std::string::npos);
     }
@@ -1991,12 +2027,14 @@ static double relayed_race(bool pair_channels) {
 TEST(net_relay_traffic_per_link) {
     // Every pair on its own channel (a race once punching settled): one stream each way.
     double link = relayed_race(true);
-    // The busiest legitimate channel: the host still forwarding four other players' states to a
-    // player (their pair channels not up yet). The racing guard sits at about twice that.
+    // The busiest legitimate channel here: the host still forwarding four other players' states to a
+    // player (their pair channels not up yet), five cars' in all. The racing guard holds a full field's
+    // (net::kMaxRaceCars: every other car's states on one channel) with room, under twice that.
     double busiest = relayed_race(false);
     double guard = net::RelayServer::Limits{}.channel_bytes_per_s;
     CHECK(busiest > link * 3);
-    CHECK(busiest * 1.6 < guard && busiest * 2.5 > guard);
+    const double full_field = busiest / 5 * (net::kMaxRaceCars - 1);
+    CHECK(full_field * 1.1 < guard && full_field * 2 > guard);
 }
 
 namespace {
@@ -2955,4 +2993,42 @@ TEST(net_update_links) {
     net::RelayServer::Versions v;
     v.release_url = "https://github.com/an-owner-name-of-length/GT3-revisited/releases/latest/download/{asset}";
     CHECK(net::check_relay_versions(v));
+}
+
+// A downloaded body's images as our own encoding (formats/model/gltf.h reencode_glb_images): the same pictures and
+// geometry, the sender's image bytes gone; a JPEG or an image beside the file a 1x1 white PNG, as the loader draws it.
+TEST(net_glb_images_reencoded) {
+    const Bytes glb = tiny_glb(4);
+    const Bytes ours = reencode_glb_images(glb, 2048);
+    const scene::Model a = load_glb(glb), b = load_glb(ours);
+    CHECK(a.textures.size() == 2 && b.textures.size() == 2);
+    if (a.textures.size() == 2 && b.textures.size() == 2) CHECK(a.textures[1].rgba == b.textures[1].rgba);
+    CHECK(a.meshes.size() == b.meshes.size() && a.meshes[0].vertices.size() == b.meshes[0].vertices.size());
+    // The sender's image bytes (its view: from offset 44 of the binary buffer) are zeros now; ours follow at the end.
+    auto bin_of = [](const Bytes& g) {
+        const u32 json_len = u32(g[12]) | u32(g[13]) << 8 | u32(g[14]) << 16 | u32(g[15]) << 24;
+        return Bytes(g.begin() + 12 + 8 + json_len + 8, g.end());
+    };
+    const Bytes sent_bin = bin_of(glb), our_bin = bin_of(ours);
+    CHECK(our_bin.size() > sent_bin.size());
+    bool zeroed = our_bin.size() >= sent_bin.size();
+    for (size_t i = 44; zeroed && i < sent_bin.size(); ++i) zeroed = our_bin[i] == 0;
+    CHECK(zeroed);
+    CHECK(std::equal(sent_bin.begin(), sent_bin.begin() + 44, our_bin.begin())); // (the geometry as it was)
+    // A JPEG: white, as load_glb draws it.
+    std::string text(glb.begin(), glb.end());
+    const size_t m = text.find("image/png");
+    CHECK(m != std::string::npos);
+    if (m == std::string::npos) return;
+    Bytes jpeg = glb;
+    std::memcpy(jpeg.data() + m, "image/jpg", 9);
+    const scene::Model j = load_glb(reencode_glb_images(jpeg, 2048));
+    CHECK(j.textures.size() == 2 && j.textures[1].width == 1 && j.textures[1].rgba == std::vector<u32>{0xFFFFFFFFu});
+    bool threw = false;
+    try {
+        reencode_glb_images(Bytes{'n', 'o', 'p', 'e'}, 2048);
+    } catch (const FormatError&) {
+        threw = true;
+    }
+    CHECK(threw);
 }

@@ -19,6 +19,7 @@ class IniDocument;
 //   cars/     new car definitions (*.ini, see game/data/mod_cars.h)
 //   events/   GT Mode events (*.ini, see game/data/mod_events.h)
 //   textures/ replacement textures (PNGs named by key, formats/texture_pack.h)
+//   liveries/ custom paint colours (*.ini or <name>/livery.ini, race/custom_paints.h)
 // See docs/MODDING.md.
 struct ModInfo {
     std::string id; // directory name
@@ -28,7 +29,8 @@ struct ModInfo {
     std::string description;
     int priority = 0; // higher wins
     bool enabled = true; // the player's choice for this disc ([mods.<disc key>], else [mods])
-    // mod.ini's discs: the discs the mod is for (disc keys or serials: "eu, SCEF-50294"); empty: every disc.
+    // mod.ini's discs: the discs the mod is for (disc keys or serials: "eu, SCEF-50294"), and those it is not
+    // for ("!eu"); empty: every disc.
     std::vector<std::string> discs;
     bool for_disc = true; // the open disc is one of `discs`
     bool active() const { return enabled && for_disc; }
@@ -37,6 +39,7 @@ struct ModInfo {
     std::vector<std::string> cars;  // host paths of cars/*.ini (game/data/mod_cars.h)
     std::vector<std::string> makers; // host paths of makers/*.ini
     std::vector<std::string> events; // host paths of events/*.ini (game/data/mod_events.h)
+    std::vector<std::string> liveries; // host paths of liveries/*.ini and liveries/*/livery.ini (race/custom_paints.h)
     std::vector<std::pair<u64, std::string>> textures; // textures/: key and host path of each picture
 };
 
@@ -117,7 +120,9 @@ RegionData region_data(const std::function<std::optional<Bytes>(const std::strin
 Language language_of(const std::function<std::optional<Bytes>(const std::string&)>& read);
 // The disc key through a reader (Vfs::kDiscKeyFile), else its region's key.
 std::string disc_key_of(const std::function<std::optional<Bytes>(const std::string&)>& read);
-// A mod.ini discs list names the disc (its key or serial, either way written; any case).
+// A mod.ini discs list names the disc (its key or serial, either way written; any case), and does
+// not exclude it ("!SCES-50858": every disc but that one; an exported car's mod stays off on the
+// disc it came from).
 bool mod_for_disc(const std::vector<std::string>& discs, std::string_view key, std::string_view serial);
 
 // A course file's path: the one the game reads (RegionData::course_path in the language),

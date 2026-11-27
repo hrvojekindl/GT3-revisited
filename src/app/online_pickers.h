@@ -68,6 +68,11 @@ inline const std::string& car_key(const PickerCar& c) { return c.arcade.empty() 
 
 // How many cars a course's start grid holds (its road's grid slots, as the race reads them), 0 when it cannot be read.
 int course_grid_size(const Vfs& vfs, const std::string& course);
+// The most cars one of our own races (Quick race's custom race, mod events, online) holds on a course: kMaxFieldCars where
+// the course has a start grid and racing lines (the places past its grid are made along its main line,
+// race::FieldConfig::made_grid), else its grid's slots; 0 when it cannot be read.
+constexpr int kMaxFieldCars = 32;
+int course_field_size(const Vfs& vfs, const std::string& course);
 
 // The arcade's class lists added to `cars` (the car page's classes: the cars as the arcade races them), every car of them,
 // nothing locked. Labels this disc's region lacks cannot be built and are left out.
@@ -157,6 +162,8 @@ public:
     // car may be chosen; the pages then offer to list only those.
     void open(App& app, PickerArt& art, const data::CarDatabase& db, const std::vector<PickerCar>& cars, int selected,
               int paint, std::function<std::string(int, int)> note, std::function<bool(int)> allowed = {});
+    // The cars' database, for paints() before the picker is opened.
+    void set_database(const data::CarDatabase& db) { db_ = &db; }
     Result update(App& app);
     void render(App& app, Ui& ui);
     void event(const SDL_Event& e) { pointer_.event(e); }

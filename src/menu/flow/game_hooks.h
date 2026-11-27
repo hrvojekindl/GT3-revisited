@@ -97,6 +97,9 @@ struct GameRequest {
     bool no_rubber_band = false;
     int laps = 0;
     int player_slot = -1;
+    // Not GT3's: a field of our own (Quick race's custom race, a mod event) of up to 32 cars, the grid places past the course's
+    // own made along its main line (race::FieldConfig::made_grid). GT3's races: off.
+    bool big_field = false;
     // Championship round (GT mode): 1-based round and round count, 0 = not a championship.
     int champ_round = 0;
     int champ_rounds = 0;
@@ -148,7 +151,7 @@ struct GameResult {
     bool abandoned = false;
     // The live race was started (START in the pre-race menu, or a run with no such menu); false
     // when the player left from the pre-race menu: GT3 counts and records only a started race
-    // (gt_mode §3.4; START).
+    // (gt_mode §3.4; START, 0x132E98).
     bool started = true;
     // License tests judged by the race: -2 = not judged (GT mode judges from
     // finished + total_time), -1 = failed / no medal, 0 gold, 1 silver, 2 bronze.

@@ -89,7 +89,7 @@ void RaceScreen::resolve_online() {
     std::optional<game::OnlineCar> oc = game::decode_online_car(net_.car_info);
     if (!oc) return;
     preset_.car = oc->car;
-    preset_.paint = oc->paint;
+    preset_.paint = game::online_car_local_paint(db_, *oc); // (a custom colour: its index here)
     // The exact core's car: its parts and settings, its arcade tyres, its engine condition.
     launch_source_ = exact_online_source(db_, *oc, preset_.course, &run_condition_);
     start_condition_ = run_condition_;
@@ -155,6 +155,7 @@ void RaceScreen::resolve_launch() {
         race_no_rubber_band_ = rq.no_rubber_band;
         race_chosen_laps_ = rq.laps;
         race_player_slot_ = rq.player_slot;
+        race_big_field_ = rq.big_field;
     }
     // Arcade Single Race: the field is drawn from the event's pool with the race module's
     // generator (gt_mode §20.4), slots 1 .. cars-1.
@@ -167,7 +168,7 @@ void RaceScreen::resolve_launch() {
     if (ev && (rq.mode == "time_trial" || rq.mode == "go_license" || rq.mode == "go_machine_test"))
         tt_start_ = event_start(*ev);
     if (ev && rq.mode == "go_license") license_event_ = code;
-    // Concept's test with the pace car (the race training information): entry 1 is the event pool's third car in its pool
+    // Concept's test with the pace car (RaceTrainingInformation::vf11): entry 1 is the event pool's third car in its pool
     // paint (the car's first paint when the pool names none).
     pace_car_ = ev && rq.mode == "go_license" && rq.lead_car && ev->entries.size() >= 3 && !online_;
     if (pace_car_) {

@@ -74,6 +74,10 @@ struct Placement {
     float x_over_d = 0, z_over_d = 1; // for the surround cue
 };
 Placement place_voice(float x, float z, float vol);
+// The se.inf effect a later build's special car plays for a new mood (VehicleState::Special::mood_new; 0x1A5860's
+// switch on Tokyo-Geneva Europe, the same in every build, into the program's effect table 0x2BC460): nullptr for 0.
+const char* mood_effect(int mood);
+
 // The distance gain of a car's engine units and loops at (x, z) in the listener's frame: min(1, 32/d),
 // d the horizontal distance, at least 0.25 m. The same for every car, the followed one too.
 float distance_gain(float x, float z);
@@ -115,6 +119,9 @@ private:
     std::array<std::array<LoopEffect, kTyreLoops>, 4> loops_{};
     std::array<std::array<SurroundCue, kTyreLoops>, 4> cues_{};
     std::array<std::array<Voice, kTyreLoops>, 4> out_{};
+    // The car's mood voice (the later builds' pod), its effect and its surround cue.
+    LoopEffect mood_;
+    SurroundCue mood_cue_;
 };
 
 // The car's sounds besides the engine and tyres (docs/formats/sound.md "Race car
@@ -147,7 +154,7 @@ public:
         bool wind = true;      // the wind unit (other cars: OpponentEngines plays theirs)
         SoundView view = SoundView::ChaseTarget;
     };
-    bool load(Vfs& vfs);
+    bool load(Vfs& vfs, EngineBanks* banks = nullptr); // (banks: EngineUnit::load)
     // Binds the loops to their effects' first regions (as CarSfx::bind); update() does it on first use.
     bool bind(const std::vector<std::shared_ptr<const sound::InstBank>>& banks, const std::vector<sound::SoundEffect>& index);
     // The turbo model's inputs after a physics step of `v` (sound §7.5): the processed

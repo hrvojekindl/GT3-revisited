@@ -1,9 +1,13 @@
-// The race start; see start.h. The per-car loop with the single-player conductor's entry set-up and start position,
-// the builders of params_build, and what else it calls:
+// The race start; see start.h. 0x1F3628's per-car loop with the single-player conductor's virtuals 24 (0x1F3188) and 25
+// (0x1F2810 / 0x1F3340), the builders of params_build (0x1DA308 / 0x1DBFD8), and what else it calls: 0x1EAA88, 0x1DDAD0 with 0x1EA8C0,
+// 0x1E4468, 0x1DD0C8, 0x1F5FD8 (0x1F5F38), 0x1F6380, 0x1F6550, 0x1DD0D8, 0x1DD210, 0x1E0740, 0x1DD5F0 (0x1DD5B8, 0x1DD5C8,
+// 0x1DD1A8), 0x1DD110, 0x1ECFC8, 0x1EC4B0, 0x1F2EA8 (0x1F9D90), 0x1F8780 (0x1F8670, 0x1F6578), 0x1F6588,
+// 0x1E3D60, 0x1E3C78, 0x1DD8A8; then 0x234EC0, 0x1EADB8 and 0x1EAFC0.
 
 #include "sim/exact/start.h"
 
 #include "base/ee_math.h"
+#include "sim/collision_exact.h"
 #include "sim/exact/ai_setup.h"
 #include "sim/exact/build_math.h"
 #include "sim/exact/hybrid.h"
@@ -11,6 +15,7 @@
 #include "sim/exact/race_flow.h"
 #include "game/data/car_database.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -29,7 +34,7 @@ void put32(Record& r, u32 off, u32 v) {
     for (u32 k = 0; k < 4; ++k) r[off + k] = u8(v >> (8 * k));
 }
 
-// The driver parameter set of driveline class `cls` (>= 4 reads 0): the course file's, else the built-in set
+// 0x1F5F38: the driver parameter set of driveline class `cls` (>= 4 reads 0): the course file's, else the built-in set
 // of the course category (1 -> set 1, 2 -> set 2, else set 0).
 std::array<u8, 32> driver_set(const StartRace& race, int cls) {
     if (race.sets)
@@ -41,10 +46,10 @@ std::array<u8, 32> driver_set(const StartRace& race, int cls) {
     return set;
 }
 
-// The driver object's parameters and aid block from its set [ai §9.1].
+// 0x1F5FD8: the driver object's parameters and aid block from its set [ai §9.1].
 void driver_params(Driver& d, const std::array<u8, 32>& b, bool z) {
     auto f = [](s32 v) { return int_to_f(v); };
-    // (z: 2002 Tokyo-Geneva's 1 / 3.6, pi / 180 and 0.1, folded toward zero: Europe)
+    // (z: 2002 Tokyo-Geneva's 1 / 3.6, pi / 180 and 0.1, folded toward zero: Europe 0x1F5928)
     const F kKmh = z ? F::raw(0x3E8E38E3) : sim::exact::kKmh, kDeg = z ? F::raw(0x3C8EFA34) : sim::exact::kDeg;
     const F k01 = z ? F::raw(0x3DCCCCCC) : sim::exact::k01;
     d.yaw_gain = f(s32(b[3]) * 5) * k001;
@@ -92,13 +97,13 @@ void event_overrides(Car& c, const RaceConfig& rules, u8 config, int cls) {
     s32 throttle = r[0xC] ? r[0xC] : 100;
     s32 brake = r[0x10], corner = r[0x14];
     // (Rule::DriverSpread, 2002 Tokyo-Geneva: no speed offset of the event's, its rule block's +0x18 .. +0x1B being the
-    // classes' grip percentages of phase 7 (ClassGrip); Europe)
+    // classes' grip percentages of phase 7 (ClassGrip); Europe 0x1F5718)
     const bool geneva = c.behaviour.rule(Rule::DriverSpread) >= Program::ConceptGenevaEu;
     s32 offset = geneva ? 0 : s8(r[0x18]);
     if (!(throttle < 101)) throttle = 100;
     if (!corner) corner = 100;
     if (!brake) brake = 100;
-    // (Rule::DriverSpread: the later builds' routine does not ask for configuration 2, Concept 2001 Tokyo: every
+    // (Rule::DriverSpread: the later builds' routine does not ask for configuration 2, Concept 2001 Tokyo 0x1F5D30: every
     // race's computer drivers differ by their car's index)
     if ((config == 2 || !gt3_program(c.behaviour.rule(Rule::DriverSpread))) && c.control == 2) {
         const s32 i = c.index;
@@ -115,7 +120,7 @@ void event_overrides(Car& c, const RaceConfig& rules, u8 config, int cls) {
 
 namespace {
 
-// The car on the road at (x, y, z) facing `heading`: the CoG's ground query from segment `hint`, the wheels' (from
+// 0x1DD210: the car on the road at (x, y, z) facing `heading`: the CoG's ground query from segment `hint`, the wheels' (from
 // the CoG's segment), each wheel's static load, travel, steer, camber and half-track, the ground frame, the pitch from the
 // ride heights, the CoG at its static height above the ground, the race progress.
 void pose(Car& c, const StartRace& race, s32 hint, F x, F y, F z, F heading) {
@@ -166,16 +171,16 @@ void pose(Car& c, const StartRace& race, s32 hint, F x, F y, F z, F heading) {
     body_axes(c);
     c.pos.z = c.ground_pos.z + c.up.z * c.p.cog_height;
     hub_offsets(c);
-    c.f3e4 = race_progress(c, race.kind, *race.course); // the conductor's race progress
+    c.f3e4 = race_progress(c, race.kind, *race.course); // the conductor's virtual 28
 }
 
-// The lagging heading and pitch start at the attitude, at rest.
+// 0x1E0740: the lagging heading and pitch start at the attitude, at rest.
 void view_reset(Car& c) {
     c.lag_heading = c.heading, c.lag_pitch = c.pitch;
     c.lag_pitch_diff = k0, c.lag_heading_acc = k0, c.lag_heading_rate = k0, c.lag_heading_diff = k0, c.lag_pitch_rate = k0;
 }
 
-// |speed| and the speedometer at v, the top speed raised to it.
+// 0x1DD5C8: |speed| and the speedometer at v, the top speed raised to it.
 void speeds(Car& c, F v) {
     c.speed_abs = v;
     c.speedo = v;
@@ -196,7 +201,7 @@ void tyres_start(Car& c, const WearParams& cp) {
 
 namespace {
 
-// The initial line: of the candidates present as themselves, the one whose point at the car's race
+// 0x1F8670: the initial line: of the candidates (0x2DA030) present as themselves, the one whose point at the car's race
 // distance is nearest (within 100 m); default 6. A candidate the line evaluation fails for compares the last values again
 // (the program's outputs are left as they were; 0 before the first).
 int initial_line(const Car& c, const AiCourse& k, const ProgramData& data) {
@@ -216,7 +221,7 @@ int initial_line(const Car& c, const AiCourse& k, const ProgramData& data) {
     return line;
 }
 
-// The driver's line (-1: the initial one) and plan, its recovery and traffic state cleared.
+// 0x1F8780: the driver's line (-1: the initial one) and plan, its recovery and traffic state cleared.
 void driver_start(Car& c, const StartRace& race, int line) {
     Driver& d = c.ai;
     d.state = 0;
@@ -231,7 +236,7 @@ void driver_start(Car& c, const StartRace& race, int line) {
     ai_gear_hint_clear(d);
 }
 
-// the race distance not clamped: the point of line `line` at race distance s (wrapped into the lap), the
+// 0x1F9880 (the race distance not clamped): the point of line `line` at race distance s (wrapped into the lap), the
 // road's height under it and the heading towards the point 10 m on; false without the line (nothing written).
 bool line_position(const StartRace& race, int line, F s, s32& seg, F& x, F& y, F& z, F& heading) {
     const AiCourse& k = *race.ai;
@@ -273,8 +278,8 @@ bool line_position(const StartRace& race, int line, F s, s32& seg, F& x, F& y, F
     return true;
 }
 
-// A car on the main line (6) at race distance `dist` (m, within the lap less 20 m either way): 1 at or past the
-// line, -1 behind it, 0 without the line. (The later builds' routine, Concept 2001 Tokyo, takes the line: -1 the
+// 0x1F2DB0: a car on the main line (6) at race distance `dist` (m, within the lap less 20 m either way): 1 at or past the
+// line, -1 behind it, 0 without the line. (The later builds' routine, Concept 2001 Tokyo 0x1E7B68, takes the line: -1 the
 // main line; only the flying start grid names another.)
 int place_on_line(const StartRace& race, s32 dist, s32& seg, F& x, F& y, F& z, F& heading, int line = 6) {
     const F lim = race.course->lap_length() - F::raw(0x41A00000);
@@ -283,6 +288,381 @@ int place_on_line(const StartRace& race, s32 dist, s32& seg, F& x, F& y, F& z, F
     if (lim < s) s = lim;
     if (!line_position(race, line, s, seg, x, y, z, heading)) return 0;
     return -1 < dist ? 1 : -1;
+}
+
+// Not GT3's (StartRace::made_grid): grid slot `slot`, at or past the course's grid table, made along the main line (6). The
+// table's places are measured against the line: each one's race distance (the course's checkpoints), where it stands across
+// the road (its share of the road's width there) and how far across from the one before it. The made places continue the
+// pattern behind the last row: two lanes as far apart as the table's last two places, in turn, round the share of the road's
+// width those two have between them; each 8 m behind the one before (closer than most of GT3's grids, 12 to 15 m a car, so a
+// long field keeps to the start straight as far as it goes), or half the rows' mean spacing (a place to the one two behind
+// it) where the table's are closer, at least 6 m. The road is the grid's own surface (not the kerb the
+// line may cut across), to the first wall, and half way to the pit lane line where that runs apart from the line (the road
+// widened for the pit lane's mouth). The lanes close up where the road is narrower. A place keeps its outline on that surface
+// and off the walls, with no wall between it and the line there or up to 30 m on (an island's blind end): brought toward the
+// road's middle, a quarter at a time, until it does. Every car faces along the line. In GT3's own arithmetic, so every
+// machine of an online race places them alike. False (the caller takes a table slot) without a line, a table or room on the
+// lap.
+namespace {
+const F kSpanStep = F::raw(0x3F000000), kSpanMax = F::raw(0x41C80000); // (0.5 m steps, out to 25 m)
+const F kWallRoom = F::raw(0x3E99999A);                                 // (0.3 m kept between a place's outline and a wall)
+
+// The ground's material at (px, py) near height h (miss: no road triangle there).
+u8 ground_material(const StartRace& race, F px, F py, F h, s32 hint, bool& miss) {
+    Ground g;
+    g.x = px, g.h = h, g.z = -py, g.seg = hint;
+    race.course->ground(g);
+    miss = g.miss != 0;
+    return g.material;
+}
+
+// The walls by a place on road segment `hint` (that segment's and its neighbours', as the collision step takes them).
+struct Walls {
+    struct Line {
+        F ax, ay, bx, by;
+    };
+    std::vector<Line> lines;
+
+    Walls(const StartRace& race, F x, F y, F reach, s32 hint) {
+        if (!race.walls) return;
+        std::vector<int> found;
+        race.walls->wall_candidates(x - reach, -(y + reach), x + reach, -(y - reach), hint, found);
+        const collide::exact::WallPt* w = race.walls->walls();
+        for (int i : found) {
+            if (w[i].flags & 2) continue; // (a sensor edge)
+            const collide::exact::WallPt &a = w[i], &b = w[collide::exact::wall_next(w, i)];
+            lines.push_back({a.x, -a.z, b.x, -b.z});
+        }
+    }
+    // Whether a wall crosses (or touches) the straight from a to b.
+    bool between(F ax, F ay, F bx, F by) const {
+        auto side = [](F ox, F oy, F px, F py, F qx, F qy) { return (px - ox) * (qy - oy) - (py - oy) * (qx - ox); };
+        auto apart = [](F u, F v) { return (k0 < u && k0 < v) || (u < k0 && v < k0); };
+        for (const Line& l : lines) {
+            if (apart(side(ax, ay, bx, by, l.ax, l.ay), side(ax, ay, bx, by, l.bx, l.by))) continue;
+            if (apart(side(l.ax, l.ay, l.bx, l.by, ax, ay), side(l.ax, l.ay, l.bx, l.by, bx, by))) continue;
+            return true;
+        }
+        return false;
+    }
+};
+
+// The road across the line at race distance `dist`: the line's point and heading, the road's reach either way of it (metres
+// along (cos h, sin h): lo < hi, none when hi <= lo), and the surface it is of.
+struct Across {
+    F x, y, z, h, lo, hi;
+    s32 seg = -1;
+    u8 road = 0;
+    bool miss = false;
+};
+
+// `road`: the grid's surface. Where the line itself is off it (a kerb), the nearest of it within 6 m; none there: the line's
+// own surface.
+bool road_across(const StartRace& race, F dist, u8 road, Across& o) {
+    if (!line_position(race, 6, dist, o.seg, o.x, o.y, o.z, o.h)) return false;
+    const F sx = ee::cos(o.h), sy = ee::sin(o.h);
+    auto material = [&](F a, bool& miss) { return ground_material(race, o.x + sx * a, o.y + sy * a, o.z + k1, o.seg, miss); };
+    o.lo = o.hi = k0;
+    o.road = material(k0, o.miss);
+    if (o.miss) return true;
+    F from = k0;
+    if (o.road != road)
+        for (F d = kSpanStep; !(F::raw(0x40C00000) < d); d = d + kSpanStep) {
+            bool left = false, right = false;
+            const bool a = material(-d, left) == road && !left, b = material(d, right) == road && !right;
+            if (!a && !b) continue;
+            from = b ? d : -d, o.road = road;
+            break;
+        }
+    const Walls walls(race, o.x, o.y, kSpanMax, o.seg);
+    for (int side = -1; side <= 1; side += 2) {
+        F reach = from;
+        for (F d = kSpanStep; !(kSpanMax < d); d = d + kSpanStep) {
+            const F a = side < 0 ? from - d : from + d;
+            bool miss = false;
+            const u8 m = material(a, miss);
+            if (miss || m != o.road || walls.between(o.x, o.y, o.x + sx * a, o.y + sy * a)) break;
+            reach = a;
+        }
+        (side < 0 ? o.lo : o.hi) = reach;
+    }
+    // The pit lane line (3), where it has left the line: 4 m or more across from it.
+    const AiCourse& k = *race.ai;
+    F px = k0, py = k0, pz = k0, ph = k0;
+    s32 pseg = -1;
+    if (k.resolve(3) == 3 && line_position(race, 3, dist, pseg, px, py, pz, ph)) {
+        const F a = ((px - o.x) * sx + (py - o.y) * sy) * kHalf;
+        const F two = F::raw(0x40000000);
+        if (two < a && a < o.hi) o.hi = a;
+        if (a < -two && o.lo < a) o.lo = a;
+    }
+    return true;
+}
+} // namespace
+
+bool made_grid_slot(const StartRace& race, int slot, s32& seg, F& x, F& y, F& z, F& heading) {
+    const std::vector<CourseQuery::Slot>& grid = race.course->grid();
+    const int n = int(grid.size());
+    if (race.ai->resolve(6) == -1 || n == 0 || slot < n) return false;
+    const F lap = race.course->lap_length(), two = F::raw(0x40000000);
+    struct Place {
+        F dist, lat, share; // race distance; across from the line; across the road, 0 its left reach .. 1 its right
+    };
+    std::vector<Place> places;
+    u8 road = 0;
+    for (const CourseQuery::Slot& g : grid) {
+        // At the place's progress on the checkpoints, then moved on by what is left along the line, where the checkpoints do
+        // not stand square to it.
+        Ground at;
+        at.x = g.x, at.h = g.y, at.z = g.z, at.seg = -1;
+        race.course->ground(at);
+        if (places.empty()) road = at.material;
+        F d = race.course->progress(g.x, g.y, g.z, at.seg), lat = k0;
+        for (int pass = 0; pass < 3; ++pass) {
+            F px, py, pz, h;
+            s32 s = -1;
+            if (!line_position(race, 6, d, s, px, py, pz, h)) return false;
+            const F dx = g.x - px, dy = -g.z - py, sh = ee::sin(h), ch = ee::cos(h);
+            lat = dx * ch + dy * sh;
+            if (pass < 2) d = d + (dx * -sh + dy * ch);
+        }
+        Across o;
+        if (!road_across(race, d, road, o)) return false;
+        F share = kHalf;
+        if (k1 < o.hi - o.lo) share = (lat - o.lo) / (o.hi - o.lo);
+        if (share < k0) share = k0;
+        if (k1 < share) share = k1;
+        if (lap * kHalf < d) d = d - lap;
+        places.push_back({d, lat, share});
+    }
+    std::stable_sort(places.begin(), places.end(), [](const Place& a, const Place& b) { return b.dist < a.dist; });
+    F gap = F::raw(0x41800000); // 16 m
+    if (n >= 3) {
+        F sum = k0;
+        for (int i = 0; i + 2 < n; ++i) sum = sum + (places[size_t(i)].dist - places[size_t(i + 2)].dist);
+        gap = sum / int_to_f(n - 2);
+    } else if (n == 2)
+        gap = (places[0].dist - places[1].dist) * two;
+    if (gap < F::raw(0x40800000) || F::raw(0x42700000) < gap) gap = F::raw(0x41800000); // (4 .. 60 m)
+    F step = gap * kHalf;
+    if (step < F::raw(0x40C00000)) step = F::raw(0x40C00000); // (6 .. 8 m)
+    if (F::raw(0x41000000) < step) step = F::raw(0x41000000);
+    // The lane: the place the made one copies, a row ahead, against the two lanes' middle.
+    const int e = slot - n;
+    const Place& last = places[size_t(n - 1)];
+    F centre = last.share, offset = k0; // (the middle's share of the road; metres from it)
+    if (n >= 2) {
+        const Place& other = places[size_t(n - 2)];
+        centre = (last.share + other.share) * kHalf;
+        offset = ((e % 2 ? last.lat - other.lat : other.lat - last.lat)) * kHalf;
+    }
+    const F dist = last.dist - int_to_f(e + 1) * step;
+    if (dist < -(lap - F::raw(0x41F00000))) return false; // (30 m short of a lap behind)
+    Across o;
+    if (!road_across(race, dist, road, o)) return false;
+    const F fx = -ee::sin(o.h), fy = ee::cos(o.h), sx = ee::cos(o.h), sy = ee::sin(o.h);
+    // The lanes within the road, a car's half width (1.2 m) in from either reach: their middle moved in, and closed up where
+    // there is no room.
+    const F margin = F::raw(0x3F99999A), mid = (o.lo + o.hi) * kHalf;
+    F room = (o.hi - o.lo) * kHalf - margin; // (either way of the road's middle)
+    if (room < k0) room = k0;
+    if (room < offset) offset = room;
+    if (offset < -room) offset = -room;
+    F want = o.lo + centre * (o.hi - o.lo);
+    const F reach = room - (offset < k0 ? -offset : offset);
+    if (want < mid - reach) want = mid - reach;
+    if (mid + reach < want) want = mid + reach;
+    want = want + offset;
+    const Walls walls(race, o.x, o.y, F::raw(0x42480000), o.seg); // (50 m)
+    // The line's points beside the place and 10, 20 and 30 m on, with the way across the road there.
+    struct Along {
+        F x, y, sx, sy;
+    };
+    std::array<Along, 4> on{};
+    on.fill({o.x, o.y, sx, sy});
+    if (!walls.lines.empty())
+        for (size_t c = 1; c < on.size(); ++c) {
+            F ax = o.x, ay = o.y, az = o.z, ah = o.h;
+            s32 aseg = o.seg;
+            line_position(race, 6, dist + int_to_f(s32(c)) * F::raw(0x41200000), aseg, ax, ay, az, ah);
+            on[c] = {ax, ay, ee::cos(ah), ee::sin(ah)};
+        }
+    auto at = [&](F along, F across, F& px, F& py) { px = o.x + fx * along + sx * across, py = o.y + fy * along + sy * across; };
+    // No wall through the place's outline (4.5 m long, 2 m wide, with kWallRoom round it), nor between the line and the
+    // place's far side, beside it and on ahead.
+    auto clear_of_walls = [&](F lat) {
+        if (walls.lines.empty()) return true;
+        const F half = k1 + kWallRoom, back = F::raw(0xC0900000) - kWallRoom;
+        const std::array<std::array<F, 2>, 4> corner = {{{kWallRoom, lat - half}, {kWallRoom, lat + half}, {back, lat + half}, {back, lat - half}}};
+        F px, py, qx, qy;
+        for (size_t c = 0; c < 4; ++c) {
+            at(corner[c][0], corner[c][1], px, py), at(corner[(c + 1) & 3][0], corner[(c + 1) & 3][1], qx, qy);
+            if (walls.between(px, py, qx, qy)) return false;
+        }
+        const F side = lat < k0 ? lat - half : lat + half;
+        for (const Along& l : on)
+            if (walls.between(l.x, l.y, l.x + l.sx * side, l.y + l.sy * side)) return false;
+        return true;
+    };
+    // Its nose and tail, middle and corners, on the road's surface.
+    auto on_road = [&](F lat) {
+        for (const F along : {k0, F::raw(0xC0900000)})
+            for (const F across : {k0, F::raw(0xBF800000), k1}) {
+                F px, py;
+                at(along, lat + across, px, py);
+                bool miss = false;
+                if (ground_material(race, px, py, o.z + k1, o.seg, miss) != o.road || miss) return false;
+            }
+        return true;
+    };
+    static const F kShares[] = {k1, F::raw(0x3F400000), kHalf, F::raw(0x3E800000), k0};
+    F lat = k0;
+    if (!o.miss) {
+        bool placed = false;
+        for (const F s : kShares) {
+            lat = mid + (want - mid) * s;
+            if ((placed = clear_of_walls(lat) && on_road(lat))) break;
+        }
+        // Nowhere whole on the road: clear of the walls at least, else on the line.
+        for (size_t i = 0; !placed && i < std::size(kShares); ++i) {
+            lat = mid + (want - mid) * kShares[i];
+            placed = clear_of_walls(lat);
+        }
+        if (!placed) lat = k0;
+    }
+    x = o.x + lat * sx, y = o.y + lat * sy, heading = o.h;
+    s32 sg = o.seg;
+    bool m = false;
+    z = road_height(*race.course, sg, m, x, y, o.z + k1);
+    if (m) {
+        sg = -1;
+        z = road_height(*race.course, sg, m, x, y, o.z + k1);
+        if (m) z = o.z;
+    }
+    seg = sg;
+    return true;
+}
+
+// MadeGrid::V080: made_grid_slot as v0.8.0 had it, for the replays recorded on it. The places measured against the line's
+// nearest point record (on a long straight or beside another part of the lap not abreast of them), each at its share of the
+// road's width; no wall looked at.
+namespace {
+// How far the road (the line's own surface, `road`) reaches across from the line's point (x, y), heading h, either way: lo
+// (<= 0) and hi (>= 0), metres along (cos h, sin h). (v0.8.0)
+void v080_road_span(const StartRace& race, F x, F y, F z, F h, s32 hint, u8 road, F& lo, F& hi) {
+    const F sx = ee::cos(h), sy = ee::sin(h);
+    for (int side = -1; side <= 1; side += 2) {
+        F reach = k0;
+        for (F d = kSpanStep; !(kSpanMax < d); d = d + kSpanStep) {
+            const F a = side < 0 ? -d : d;
+            bool miss = false;
+            const u8 m = ground_material(race, x + sx * a, y + sy * a, z + k1, hint, miss);
+            if (miss || m != road) break;
+            reach = d;
+        }
+        (side < 0 ? lo : hi) = side < 0 ? -reach : reach;
+    }
+}
+} // namespace
+
+bool v080_made_grid_slot(const StartRace& race, int slot, s32& seg, F& x, F& y, F& z, F& heading) {
+    const AiCourse& k = *race.ai;
+    const int l = k.resolve(6);
+    const std::vector<CourseQuery::Slot>& grid = race.course->grid();
+    const int n = int(grid.size());
+    if (l == -1 || n == 0 || slot < n) return false;
+    const std::vector<AiPoint>& p = k.lines[size_t(l)];
+    if (p.empty()) return false;
+    const F lap = race.course->lap_length(), half_lap = lap * kHalf;
+    struct Place {
+        F dist, share; // race distance; across the road, 0 its left reach .. 1 its right
+    };
+    std::vector<Place> places;
+    for (const CourseQuery::Slot& g : grid) {
+        const F gx = g.x, gy = -g.z;
+        size_t best = 0;
+        F best_d2 = F::raw(0x7F7FFFFF);
+        for (size_t a = 0; a < p.size(); ++a) {
+            const F dx = gx - p[a].x, dy = gy - p[a].y;
+            const F d2 = dx * dx + dy * dy;
+            if (d2 < best_d2) best_d2 = d2, best = a;
+        }
+        const AiPoint& q = p[best];
+        const F dx = gx - q.x, dy = gy - q.y, sh = ee::sin(q.heading), ch = ee::cos(q.heading);
+        const F along = dx * -sh + dy * ch, across = dx * ch + dy * sh;
+        F d = q.dist + along;
+        if (half_lap < d) d = d - lap;
+        // (the road across the place's own point of the line)
+        const F px = q.x + -sh * along, py = q.y + ch * along;
+        bool miss = false;
+        const u8 road = ground_material(race, px, py, q.height + k1, q.seg, miss);
+        F lo = k0, hi = k0;
+        if (!miss) v080_road_span(race, px, py, q.height, q.heading, q.seg, road, lo, hi);
+        F share = kHalf;
+        if (k1 < hi - lo) share = (across - lo) / (hi - lo);
+        if (share < k0) share = k0;
+        if (k1 < share) share = k1;
+        places.push_back({d, share});
+    }
+    std::stable_sort(places.begin(), places.end(), [](const Place& a, const Place& b) { return b.dist < a.dist; });
+    F gap = F::raw(0x41800000); // 16 m
+    if (n >= 3) {
+        F sum = k0;
+        for (int i = 0; i + 2 < n; ++i) sum = sum + (places[size_t(i)].dist - places[size_t(i + 2)].dist);
+        gap = sum / int_to_f(n - 2);
+    } else if (n == 2)
+        gap = (places[0].dist - places[1].dist) * F::raw(0x40000000);
+    if (gap < F::raw(0x40800000) || F::raw(0x42700000) < gap) gap = F::raw(0x41800000); // (4 .. 60 m)
+    // Each made place half a row (at least 6 m) behind the one before, on the last two places' sides in turn: two by two,
+    // staggered, where the road is wide; one behind the other where it is too narrow for two side by side.
+    F step = gap * kHalf;
+    if (step < F::raw(0x40C00000)) step = F::raw(0x40C00000);
+    const int e = slot - n, j = n >= 2 ? n - 2 + e % 2 : 0;
+    const F dist = places[size_t(n - 1)].dist - int_to_f(e + 1) * step, share = n >= 2 ? places[size_t(j)].share : kHalf;
+    if (dist < -(lap - F::raw(0x41F00000))) return false; // (30 m short of a lap behind)
+    F lx = k0, ly = k0, lz = k0, lh = k0;
+    s32 lseg = -1;
+    if (!line_position(race, 6, dist, lseg, lx, ly, lz, lh)) return false;
+    bool miss = false;
+    const u8 road = ground_material(race, lx, ly, lz + k1, lseg, miss);
+    F lo = k0, hi = k0;
+    if (!miss) v080_road_span(race, lx, ly, lz, lh, lseg, road, lo, hi);
+    // The place's share of the road, a car's half width (1.2 m) in from either reach.
+    const F margin = F::raw(0x3F99999A), mid = (lo + hi) * kHalf;
+    F want = lo + share * (hi - lo);
+    if (hi - lo < margin + margin) want = mid;
+    else if (want < lo + margin) want = lo + margin;
+    else if (hi - margin < want) want = hi - margin;
+    const F fx = -ee::sin(lh), fy = ee::cos(lh), sx = ee::cos(lh), sy = ee::sin(lh);
+    static const F kShares[] = {k1, F::raw(0x3F400000), kHalf, F::raw(0x3E800000), k0};
+    static const std::array<std::array<F, 2>, 4> kProbes = {{{k0, k0},
+                                                            {F::raw(0xC0800000), k0},
+                                                            {F::raw(0xC0000000), F::raw(0xBF800000)},
+                                                            {F::raw(0xC0000000), k1}}}; // (along, across) m
+    F lat = mid;
+    for (const F s : kShares) {
+        lat = mid + (want - mid) * s;
+        bool clear = !miss;
+        for (const auto& pr : kProbes) {
+            if (!clear) break;
+            const F across = lat + pr[1];
+            bool m = false;
+            const u8 at = ground_material(race, lx + fx * pr[0] + sx * across, ly + fy * pr[0] + sy * across, lz + k1, lseg, m);
+            clear = !m && at == road;
+        }
+        if (clear) break;
+    }
+    x = lx + lat * sx, y = ly + lat * sy, heading = lh;
+    s32 sg = lseg;
+    bool m = false;
+    z = road_height(*race.course, sg, m, x, y, lz + k1);
+    if (m) {
+        sg = -1;
+        z = road_height(*race.course, sg, m, x, y, lz + k1);
+        if (m) z = lz;
+    }
+    seg = sg;
+    return true;
 }
 
 // The later builds' single race flying start (Rule::FlyingGrid; Concept 2001 Tokyo's single race conductor): an event with
@@ -297,7 +677,7 @@ bool flying_grid(const StartRace& race) {
     return dist != 0 && race.rules[0] > 0;
 }
 
-// Car i's pit box: its point of the stop line, half a metre on along its heading. On a course whose stop
+// 0x1F9E30: car i's pit box: its point of the stop line (0x1F9D90), half a metre on along its heading. On a course whose stop
 // line has no such point (fewer than i + 4 points) the program reads memory outside the line: before the line's points in the
 // course file, or from address 4 on when the course has no stop line (the line loader nulls an empty line); refused (the race
 // is not built). Only free practice's car 0 starts there, and only GT mode's race menus offer free practice: their courses
@@ -313,7 +693,7 @@ void pit_box(const StartRace& race, int i, s32& seg, F& x, F& y, F& z, F& headin
     y = y + ee::cos(heading) * kHalf;
 }
 
-// The race distance (less the lap, so negative) of the last start of a tight arc (|radius| <= r) on the main
+// 0x1F9708: the race distance (less the lap, so negative) of the last start of a tight arc (|radius| <= r) on the main
 // line at least -lo metres before the line's end; lo itself when there is none.
 F last_tight_arc(const StartRace& race, F lo, F r) {
     const AiCourse& k = *race.ai;
@@ -334,7 +714,7 @@ F last_tight_arc(const StartRace& race, F lo, F r) {
     return lo;
 }
 
-// The car's set-up from its spec. mode, dist, speed: the conductor's start position (speed in km/h).
+// 0x1DDAD0: the car's set-up from its spec. mode, dist, speed: the conductor's virtual 25 (speed in km/h).
 void setup(Car& c, Record& img, Spec& spec, const StartRace& race, const StartEntry& e, int i, s32 control, s32 pedal, u8 ghost,
            s32 mode, s32 dist, F x, F y, F z, F heading, s32 speed) {
     // The engine condition from the entry.
@@ -355,7 +735,7 @@ void setup(Car& c, Record& img, Spec& spec, const StartRace& race, const StartEn
     if (!e.tcs_on) spec[0x110] = 0;
     c.ghost = ghost;
     c.index = u8(i);
-    c.control = s8(control);
+    c.control = s8(control); // 0x1DD0C8
     c.driver_kind = 0;
     {
         ConvertInputs in;
@@ -380,7 +760,7 @@ void setup(Car& c, Record& img, Spec& spec, const StartRace& race, const StartEn
         event_overrides(c, rules, race.config, cls);
     }
     c.ai.downforce = (c.p.downforce_coef[0] + c.p.downforce_coef[1]) / c.p.weight;
-    if (c.control == 0) c.pedal_style = u8(pedal);
+    if (c.control == 0) c.pedal_style = u8(pedal); // 0x1DD0D8
     else if (c.control > 0 && c.control < 3) c.pedal_style = 0;
     c.x535 = 0;
     // The placement: on the main line (modes 1-5; the grid when the course has none: mode 0), the pit box (6, 7) or the grid.
@@ -410,7 +790,7 @@ void setup(Car& c, Record& img, Spec& spec, const StartRace& race, const StartEn
     if (behind) c.sector = 0, c.laps = 0;
     else {
         const CourseQuery& q = *race.course;
-        const int last = sector_count(race.kind, race.rules[1], q) - 1; // the conductor's sector count / sector start
+        const int last = sector_count(race.kind, race.rules[1], q) - 1; // the conductor's virtuals 33 / 34
         const std::array<F, 4> machine = machine_sectors(*race.data);
         c.sector = u8(last);
         for (int s = 0; s < last; ++s)
@@ -425,37 +805,41 @@ void setup(Car& c, Record& img, Spec& spec, const StartRace& race, const StartEn
         else c.sector = 0, c.laps = 0;
     }
     c.x530 = 0;
-    c.best_lap = 0x157529FF;
+    c.best_lap = 0x157529FF; // 0x1EC4B0
     c.race_hold = 0, c.hold = 0, c.finished = 0, c.x51c = 0, c.x51d = 0;
-    { // the car's pit box, a point of the stop line (4) from its end
+    { // 0x1F9D90: the car's pit box, a point of the stop line (4) from its end
         const AiCourse& k = *race.ai;
         c.pit_box = s8(k.lines[4].empty() ? 0 : s32(k.lines[4].size()) - (i + 4));
+        // Our bigger fields: the stop line has boxes for six cars (its points 3 .. count - 4); the cars past them share the
+        // boxes behind the player's.
+        const s32 boxes = s32(k.lines[4].size()) - 6;
+        if (race.made_grid == MadeGrid::On && boxes > 1 && i >= boxes) c.pit_box = s8(boxes + 2 - (1 + (i - boxes) % (boxes - 1)));
     }
     c.rank = s8(i + 1);
     driver_start(c, race, u32(mode - 2) < 4 ? 6 : mode == 8 ? -1 : c.control == 0 ? 7 : -1);
     ai_gear_hint(c);
     CoursePlan plan(*race.ai, race.wear);
-    if (pit) { // the pit box: on the stop line (pit_stop), held for 120 steps (PAL 100)
+    if (pit) { // the pit box: on the stop line (pit_stop, 0x1E3D60), held for 120 steps (PAL 100)
         pit_stop(c, plan);
         c.hold = pal_rate(c) ? 100 : 120;
     }
     c.ai_hold = 0;
     if (control == 0 && (u32(mode - 2) < 3 || mode == 8)) { // a player's flying or rolling start: the AI drives the run-up
-        drive_on(c, plan);
-        if (!ntsc_j_rules(c, Rule::RunUp)) c.shift_lockout = pal_rate(c) ? 10 : 12; // not in the NTSC-J program
+        drive_on(c, plan); // 0x1E3C78
+        if (!ntsc_j_rules(c, Rule::RunUp)) c.shift_lockout = pal_rate(c) ? 10 : 12; // not in NTSC-J's 0x1DDAD0
         if (mode == 3) c.ai_hold = pal_rate(c) ? 150 : 180;
         else if (mode == 8) c.ai_hold = pal_rate(c) ? 250 : 300;
     }
-    const F v = mode == 4 ? c.ai.v_next : int_to_f(speed) * folded(c.behaviour, kKmh.bits, 0x3E8E38E3); // (Europe's)
+    const F v = mode == 4 ? c.ai.v_next : int_to_f(speed) * folded(c.behaviour, kKmh.bits, 0x3E8E38E3); // (Europe 0x1EC208's)
     if (!(v == k0)) moving_start(c, v);
     // The later builds' special cars (Rule::PodMood's routines): special car 1 starts with its stop count at 0 (Concept
-    // 2001 Tokyo) and its mood bytes cleared but for the time, 60 steps (2002 Tokyo-Geneva Europe's
-    // 50); a car with a wing starts with it in.
+    // 2001 Tokyo 0x1DB9E0) and its mood bytes cleared but for the time, 60 steps (0x1DB0F8; 2002 Tokyo-Geneva Europe's
+    // 50); a car with a wing starts with it in (0x1DBC00).
     if (const Program how = c.behaviour.rule(Rule::PodMood); !gt3_program(how) && (c.p.special == 1 || c.p.special == 2)) {
         c.later.special = {};
         if (c.p.special == 1) c.later.special[2] = how == Program::ConceptGenevaEu ? 0x32 : 0x3C;
     }
-    // The later builds' layout 7 system (Concept 2001 Tokyo): its store starts full.
+    // The later builds' layout 7 system (Concept 2001 Tokyo 0x1DA060): its store starts full.
     if (race.data) {
         if (const Hybrid h = hybrid_settings(*race.data); hybrid_car(c, h)) hybrid_start(c, h);
     }
@@ -498,7 +882,7 @@ void standing_start(Car& c) {
     c.rpm = 0, c.ascc_status = 0, c.tcs_status = 0, c.hit_rumble = top;
     c.rumble = 0, c.x16d4 = 0, c.steer_force = 0x80, c.wheel_pos_prev = 0, c.wheel_pos = 0;
     c.ffb = top, c.ffb_count = 0, c.turbo_spool = 0, c.x4e5 = 0x7F, c.x4e4 = 0x7F;
-    for (Wheel& w : c.w) {
+    for (Wheel& w : c.w) { // 0x1DD1A8
         w.smoke_emit = k0, w.x29 = 0xFF, w.slip_intensity = k0, w.skid_pitch = k1, w.spin = k0, w.speed_ramp = k0;
         w.slip_ratio = k0, w.circle = k0, w.bump = k0, w.damper_v = k0, w.spring_f = k0, w.damper_f = k0, w.flap = k0, w.flap_v = k0;
     }
@@ -512,7 +896,7 @@ void standing_start(Car& c) {
 
 bool stepless_ratio(const Driveline& d, F& omega, F& ratio, bool z) {
     if (d.kind != 1) return false;
-    const F hold = int_to_f(d.down_rpm[0]) * (z ? F::raw(0x3DD6774E) : kRpm); // (z: 2002 Tokyo-Geneva's, Europe)
+    const F hold = int_to_f(d.down_rpm[0]) * (z ? F::raw(0x3DD6774E) : kRpm); // (z: 2002 Tokyo-Geneva's, Europe 0x1DA198)
     if (omega < hold) {
         ratio = k1;
         return true;
@@ -528,7 +912,7 @@ void moving_start(Car& c, F v) {
     c.vel.x = c.fwd.x * v, c.vel.y = c.fwd.y * v, c.vel.z = c.fwd.z * v;
     speeds(c, v);
     set_gear(c, u8(gear_for_speed(c, v)));
-    // (2002 Tokyo-Geneva's 2 pi / 60 and 2 pi: Europe)
+    // (2002 Tokyo-Geneva's 2 pi / 60 and 2 pi: Europe 0x1EBF98)
     const F kRpm = folded(c.behaviour, sim::exact::kRpm.bits, 0x3DD6774E), kTwoPi = folded(c.behaviour, sim::exact::kTwoPi.bits, 0x40C90FDA);
     const F idle = int_to_f(c.p.e.idle) * kRpm;
     F w = v * c.p.d.gear_speed[c.gear];
@@ -548,7 +932,7 @@ void moving_start(Car& c, F v) {
         c.turbo_load_prev = k1;
         c.blowoff_state = 0;
     }
-    // (Rule::MovingStart: the later builds' routine, Concept 2001 Tokyo, opens the throttle of a car whose AI
+    // (Rule::MovingStart: the later builds' routine, Concept 2001 Tokyo 0x1EBED0, opens the throttle of a car whose AI
     // segment mode D +0x83 is 0, a straight: pedal F +0x428 and throttle F +0x4A4 at 1.)
     if (!gt3_program(c.behaviour.rule(Rule::MovingStart)) && c.ai.mode == 0) c.throttle = k1, c.throttle_pedal = k1;
     c.clutch = 1;
@@ -563,7 +947,7 @@ void moving_start(Car& c, F v) {
 
 namespace {
 
-// Car a against car b: 1 a ahead, -1 b ahead, 0 level (laps less the pit-box flag).
+// 0x1ED108: car a against car b: 1 a ahead, -1 b ahead, 0 level (0x1ED018: laps less the pit-box flag).
 int compare(const Car& a, const Car& b) {
     const s32 la = s32(a.laps) - a.lap_base, lb = s32(b.laps) - b.lap_base;
     if (lb < la) return 1;
@@ -618,9 +1002,9 @@ StartResult start_cars(const StartRace& race_in, std::span<const StartEntry> ent
         cars[i].ev = electric_drive(race.db, entries[i].eq);
         load_image(cars[i], r.records[i].data());
     }
-    // The rank reset: free practice's code puts the cars in grid-slot order, the others' rank_reset in index order; the ranking
-    // sorts them (race_ranking; free practice's code by the best lap); then free practice's ranking set-up takes the
-    // lower of each car's and its entry's best lap.
+    // Virtual 2: free practice's 0x1F23E0 puts the cars in grid-slot order, the others' rank_reset in index order; virtual 3
+    // sorts them (race_ranking; free practice's 0x1F24C0 by the best lap, 0x1EC4E0); then free practice's virtual 22 takes the
+    // lower of each car's and its entry's best lap (0x1EC4C0).
     if (race.kind == Conductor::FreePractice) {
         r.order.fill(-1);
         for (size_t i = 0; i < cars.size(); ++i) {
@@ -629,7 +1013,7 @@ StartResult start_cars(const StartRace& race_in, std::span<const StartEntry> ent
             r.order[size_t(slot)] = s32(i);
         }
     } else {
-        // The later builds' flying start (Rule::FlyingGrid; Concept 2001 Tokyo's ranking set-up) before the ranking:
+        // The later builds' flying start (Rule::FlyingGrid; Concept 2001 Tokyo's virtual 22, 0x1E7530) before the ranking:
         // car i again at its distance on the line the grid table names (+0: six entries, repeating), posed there (its speed
         // and the rest of its start kept), and asked to drive that line at once. A line the course lacks with every
         // fallback leaves the place the car before it had (the routine's outputs on its stack; refused for the first car).
@@ -675,7 +1059,7 @@ ElectricDrive electric_drive(const data::CarDatabase* db, const Equipment& eq) {
 
 Record start_car(const StartRace& race, const StartEntry& e, int i, Car::Later* later) {
     Record img{};
-    // Cleared; the race info and conductor; the driver object's conductor, car and AI course object.
+    // 0x1EAA88: cleared; the race info and conductor; the driver object's conductor, car and AI course object.
     put32(img, 0x0, race.info);
     put32(img, 0x4, race.conductor);
     put32(img, 0xEC8, race.conductor);
@@ -684,11 +1068,11 @@ Record start_car(const StartRace& race, const StartEntry& e, int i, Car::Later* 
     Car c{};
     if (race.data) c.behaviour = race.data->behaviour();
     const Conductor kind = race.kind;
-    // The entry set-up. Races, battles, free practice: a player's entry is driven by the pad (configuration 3: by the
-    // AI with the pad decoded, 2: by the AI), with its spec flag and pedal style; other entries by the AI. Time
-    // trials, free runs: the spec flag and pedal style from every entry, the player's on the pad (configurations 2 and 3:
-    // by the AI with the pad decoded), the others' by the AI with the pad decoded, car 1 a ghost (free runs: the
-    // ghost byte 2). The pace-car test (Concept's training conductor) takes the races' answer, the counterpart:
+    // Virtual 24. 0x1F3188 (races, battles, free practice): a player's entry is driven by the pad (configuration 3: by the
+    // AI with the pad decoded, 2: by the AI), with its spec flag and pedal style; other entries by the AI. 0x1F3218 (time
+    // trials, free runs): the spec flag and pedal style from every entry, the player's on the pad (configurations 2 and 3:
+    // by the AI with the pad decoded), the others' by the AI with the pad decoded, car 1 a ghost (free runs, 0x1F1268: the
+    // ghost byte 2). The pace-car test (Concept's DynamicsConductorTraining) takes the races' answer, 0x1F3188's counterpart:
     // the pace car, an entry without a device, is a computer car.
     s32 control = 2, flag = 0, pedal = 0;
     u8 ghost = 0;
@@ -703,22 +1087,33 @@ Record start_car(const StartRace& race, const StartEntry& e, int i, Car::Later* 
     Spec spec{};
     Equipment eq = e.eq;
     build_spec(*race.db, *race.data, eq, flag, race.category == 0xFF ? 0 : race.category, false, spec);
-    // The grid slot: its point, every car facing slot 0's yaw + pi. A slot past the course's grid table
+    // The grid slot (0x18F9F0): its point, every car facing slot 0's yaw + pi (0x18F9C8). A slot past the course's grid table
     // reads what follows the table in the road block, as the program does (CourseQuery::slot).
-    if (u32(e.grid_slot) >= 8) throw std::runtime_error("race start: a grid slot outside 0 .. 7");
-    const CourseQuery::Slot s = race.course->slot(e.grid_slot, race.road);
-    const F pi = race.data ? folded(race.data->behaviour(), kPi.bits, 0x40490FDA) : kPi; // (2002 Tokyo-Geneva's: Europe)
-    const F x = s.x, y = -s.z, z = s.y, heading = race.course->slot(0, race.road).yaw + pi;
+    // Our bigger fields: a slot past the table made along the main line (made_grid_slot; none there: a table slot, cars
+    // side by side).
+    const int table = int(race.course->grid().size());
+    const bool made = race.made_grid != MadeGrid::Off && e.grid_slot >= table;
+    if (u32(e.grid_slot) >= (made ? kMaxCars : kGt3Cars)) throw std::runtime_error("race start: a grid slot outside the grid");
+    const int slot = made && table > 0 ? e.grid_slot % table : e.grid_slot;
+    const CourseQuery::Slot s = race.course->slot(slot, race.road);
+    const F pi = race.data ? folded(race.data->behaviour(), kPi.bits, 0x40490FDA) : kPi; // (2002 Tokyo-Geneva's: Europe 0x18E178)
+    F x = s.x, y = -s.z, z = s.y, heading = race.course->slot(0, race.road).yaw + pi;
+    if (made) {
+        s32 seg = -1;
+        F mx, my, mz, mh;
+        const auto place = race.made_grid == MadeGrid::V080 ? v080_made_grid_slot : made_grid_slot;
+        if (place(race, e.grid_slot, seg, mx, my, mz, mh)) x = mx, y = my, z = mz, heading = mh;
+    }
     // Virtual 25.
     s32 mode = 0, dist = 0, speed = 0;
-    const u8 start_speed = race.rules[0];
-    const s16 start_dist = s16(u16(race.rules[0x3A] | race.rules[0x3B] << 8));
-    auto event_speed = [&] {
+    const u8 start_speed = race.rules[0];                                  // 0x1F32E0
+    const s16 start_dist = s16(u16(race.rules[0x3A] | race.rules[0x3B] << 8)); // 0x1F32D0
+    auto event_speed = [&] { // 0x1F3340
         if (start_speed > 0) speed = start_speed;
     };
     switch (kind) {
-    case Conductor::SinglePlayer: // the rolling start puts car 0 in mode 8 and every car at 80 km/h
-        if (flying_grid(race)) { // (the later builds' flying start, Concept 2001 Tokyo: car i past the first i steps)
+    case Conductor::SinglePlayer: // 0x1F2810: the rolling start puts car 0 in mode 8 and every car at 80 km/h
+        if (flying_grid(race)) { // (the later builds' flying start, Concept 2001 Tokyo 0x1E73E0: car i past the first i steps)
             using T = ProgramData::Table;
             mode = 1, dist = start_dist, speed = start_speed;
             for (int k = 0; k < i; ++k)
@@ -729,11 +1124,11 @@ Record start_car(const StartRace& race, const StartEntry& e, int i, Car::Later* 
         } else event_speed();
         break;
     case Conductor::TimeTrial:
-    case Conductor::FreeRun: { // the flying start
+    case Conductor::FreeRun: { // virtual 26 (0x1F34B8)
         const std::array<u8, 32> set = driver_set(race, 0);
         const s32 back = s32(set[25]) * -10, fast = s32(set[26]) * 5;
-        if (start_dist < 0 && start_speed > 0) mode = 2, dist = start_dist, speed = start_speed; // the event's
-        else if (back < 0 && fast > 0) mode = 3, dist = back, speed = fast;                    // the driver set's
+        if (start_dist < 0 && start_speed > 0) mode = 2, dist = start_dist, speed = start_speed; // 0x1F3398: the event's
+        else if (back < 0 && fast > 0) mode = 3, dist = back, speed = fast;                    // 0x1F3420: the driver set's
         else { // before the last tight arc: 400 m and radius 350 m (dirt 300 / 200)
             mode = 4;
             const int cat = race.category == 0xFF ? 0 : race.category;
@@ -743,12 +1138,18 @@ Record start_car(const StartRace& race, const StartEntry& e, int i, Car::Later* 
         }
         break;
     }
-    case Conductor::FreePractice: // car 0 in its pit box, the others on the line behind at 120 km/h
+    case Conductor::FreePractice: // 0x1F2070: car 0 in its pit box, the others on the line behind at 120 km/h
         if (i == 0) mode = 6;
-        else mode = 5, dist = -(200 * i + 300), speed = 120;
+        else {
+            // (a bigger field of ours than the lap holds at 200 m a car: closer together, the last 100 m short of a lap behind)
+            s32 apart = 200;
+            if (const s32 room = ee::to_int(race.course->lap_length()) - 400; race.made_grid == MadeGrid::On && race.cars > 1 && room < apart * (race.cars - 1))
+                apart = std::max(room / (race.cars - 1), s32(1));
+            mode = 5, dist = -(apart * i + 300), speed = 120;
+        }
         break;
-    case Conductor::Battle2P: // with a handicap, car 0 and the others apart on the line at the event's speed
-        if (race.data && race.data->behaviour().rule(Rule::BattleStart) == Program::NtscJ && race.cars != 2) break; // the NTSC-J program: two cars only
+    case Conductor::Battle2P: // 0x1F0010: with a handicap, car 0 and the others apart on the line at the event's speed
+        if (race.data && race.data->behaviour().rule(Rule::BattleStart) == Program::NtscJ && race.cars != 2) break; // NTSC-J's 0x1ED888: two cars only
         if (const s32 h = race.handicap) {
             s32 d0 = -10, d1 = -10;
             if (h > 0) d1 = -h < -19 ? -h : -20;
@@ -757,11 +1158,11 @@ Record start_car(const StartRace& race, const StartEntry& e, int i, Car::Later* 
             event_speed();
         }
         break;
-    case Conductor::License: // the event's flying start, else mode 1 at its distance
+    case Conductor::License: // 0x1F0D00: the event's flying start (0x1F3398), else mode 1 at its distance (0x1F32F0)
     case Conductor::Training:
         if (start_dist < 0 && start_speed > 0) {
             mode = 2, dist = start_dist, speed = start_speed;
-            // The later builds' licence start: without a ghost car (the player-record test: the pace-car test), car i > 0 starts
+            // The later builds' licence start: without a ghost car (virtual 5: the pace-car test), car i > 0 starts
             // trunc(i x speed / 3.6) m further on, one second ahead per car at the start speed (the divisor's bits are the
             // program's constant, 3.6 as a float).
             if (kind == Conductor::Training && i > 0) dist += ee::to_int(int_to_f(i) * int_to_f(speed) / F::raw(0x40666666));
@@ -770,10 +1171,10 @@ Record start_car(const StartRace& race, const StartEntry& e, int i, Car::Later* 
             event_speed();
         }
         break;
-    default: event_speed();
+    default: event_speed(); // 0x1F3340
     }
     setup(c, img, spec, race, e, i, control, pedal, ghost, mode, dist, x, y, z, heading, speed);
-    // The gearbox part's kind (0x13 without a record).
+    // 0x234EC0: the gearbox part's kind (0x13 without a record).
     {
         u32 kind = 0x13;
         const u64 id = eq.part[size_t(data::TableId::Gear)];
@@ -781,7 +1182,7 @@ Record start_car(const StartRace& race, const StartEntry& e, int i, Car::Later* 
             if (const ByteSpan* r = race.db->record(data::TableId::Gear, id); r && r->size() > 0x10)
                 kind = race.data->w(ProgramData::Table::GearKinds, 4 * u32((*r)[0x10]));
         c.x16d0 = kind != 0x13;
-        // (Rule::Layout: the later builds' start, Concept 2001 Tokyo, sets it for a layout 7 car as well)
+        // (Rule::Layout: the later builds' start, Concept 2001 Tokyo 0x1E8460, sets it for a layout 7 car as well)
         if (!gt3_program(c.behaviour.rule(Rule::Layout)) && c.p.d.layout == 7) c.x16d0 = 1;
     }
     c.x16d1 = 1;

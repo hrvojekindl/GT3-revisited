@@ -257,9 +257,10 @@ public:
     struct Car {
         u16 sound_id = 0;
         u8 variant = 0;
+        std::string sound_dir; // an exported mod car's own banks
         float cd = 0.35f; // drag coefficient for the wind unit
     };
-    void load(Vfs& vfs, const std::vector<Car>& cars);
+    void load(Vfs& vfs, const std::vector<Car>& cars, EngineBanks* banks = nullptr); // (banks: EngineSound::load)
     // `listener`/`listener_velocity`: the camera's position and velocity (CameraRig::eye_velocity).
     // `right`/`forward`: the listener's (camera's) unit axes, for GT3's stereo pan. `kind`: the
     // camera's sound kind; `target`: the car the camera follows (-1 none), heard with the target's

@@ -5,6 +5,7 @@
 #include "app/app.h"
 #include "app/ui.h"
 #include "base/log.h"
+#include "formats/course/ai_lines.h"
 #include "formats/course/course_file.h"
 #include "formats/course/road.h"
 #include "formats/model/car_model.h"
@@ -16,6 +17,7 @@
 #include "menu/flow/menu_sound.h"
 #include "menu/flow/options.h"
 #include "race/backend.h"
+#include "race/custom_paints.h"
 #include "race/paint.h"
 #include "render/gpu_model.h"
 #include "render/showroom.h"
@@ -97,6 +99,24 @@ int course_grid_size(const Vfs& vfs, const std::string& course) {
     try {
         const course::CourseFile cf = course::CourseFile::parse(*f);
         return int(course::Road::parse(cf.section(*f, course::kSlotRoad)).grid.size());
+    } catch (const std::exception& e) {
+        LOG_WARN("%s's start grid: %s", course.c_str(), e.what());
+        return 0;
+    }
+}
+
+int course_field_size(const Vfs& vfs, const std::string& course) {
+    std::optional<Bytes> f = vfs.read(course_file_path(vfs, course));
+    if (!f) return 0;
+    try {
+        const course::CourseFile cf = course::CourseFile::parse(*f);
+        const int grid = int(course::Road::parse(cf.section(*f, course::kSlotRoad)).grid.size());
+        if (grid <= 0) return 0;
+        const ByteSpan lines = cf.section(*f, course::kSlotAiLines);
+        bool line = false;
+        if (!lines.empty())
+            for (const course::AiLine& l : course::AiLines::parse(lines).lines) line = line || !l.points.empty();
+        return line ? kMaxFieldCars : std::min(grid, 8);
     } catch (const std::exception& e) {
         LOG_WARN("%s's start grid: %s", course.c_str(), e.what());
         return 0;
@@ -510,7 +530,7 @@ void CarTurntable::draw(App& app, const SDL_FRect& dst, const data::CarDatabase&
                 opt.menu_tyres = true;
                 opt.paint = paint;
                 opt.wheel_spec = race::car_setup_from_database(db, car.label).wheels;
-                opt.body_mod = body_mod_for_car(db, car.label, paint);
+                opt.body_mod = body_mod_for_car(db, car.label, paint, data::CarScene::Menu);
                 std::optional<Bytes> wheel_file;
                 if (!car.wheel.empty()) wheel_file = app.vfs()->read("wheel/" + car.wheel);
                 else if (!opt.body_mod.wheel.empty()) wheel_file = app.vfs()->read("wheel/" + opt.body_mod.wheel);
@@ -519,6 +539,10 @@ void CarTurntable::draw(App& app, const SDL_FRect& dst, const data::CarDatabase&
                 if (menu_model && !wheel_file)
                     opt.stand_in_rim = [&app, model = car.model] {
                         return race_rim([&app](const std::string& p) { return app.vfs()->read(p); }, model);
+                    };
+                if (menu_model) // (a texture pack's picture for the race's tyre)
+                    opt.other_tyre = [&app, model = car.model] {
+                        return race_tyre([&app](const std::string& p) { return app.vfs()->read(p); }, model);
                     };
                 scene::Model m = load_car_model(*file, opt, car.model);
                 // Showroom pose: the body rides q (ride height) above the floor, the wheels on it.
@@ -716,6 +740,14 @@ std::vector<PaintInfo> CarPicker::paints(App& app, const PickerCar& c) const {
             int n = gd->color_count(c.label);
             for (int i = 0; i < n; ++i) out.push_back(info(gd->color_id(c.label, i)));
         }
+    } else if (const data::ModCar* m = db_ ? db_->mod_car(c.label) : nullptr; m && !m->paints.empty()) {
+        // A mod car's own paints ([paints]), as the race draws them (race::CarColors::add_mod_cars).
+        auto byte = [](float v) { return u32(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+        for (size_t i = 0; i < m->paints.size(); ++i)
+            if (c.garage < 0 || int(i) == c.paint) {
+                const std::array<float, 3>& v = m->paints[i].second;
+                out.push_back({byte(v[0]) | byte(v[1]) << 8 | byte(v[2]) << 16, ""});
+            }
     } else if (app.vfs()) {
         static race::CarColors colors; // the disc's paint table, when GT Mode data is not loaded
         static bool loaded = colors.load(*app.vfs());
@@ -729,6 +761,14 @@ std::vector<PaintInfo> CarPicker::paints(App& app, const PickerCar& c) const {
             }
     }
     if (out.empty()) out.push_back({0x808080, ""});
+    // The model's custom colours after the disc's (race/custom_paints.h): paint index disc count + k.
+    if (c.garage < 0) {
+        std::shared_ptr<const race::CustomPaints> custom = race::custom_paints();
+        const std::string key = db_ ? race::paint_key(*db_, c.label, c.model) : c.model; // (a mod car's own list)
+        if (custom->disc_count(key) == int(out.size()))
+            for (const race::CustomPaint& p : custom->of(key))
+                if (p.listed()) out.push_back({p.rgb, p.name});
+    }
     return out;
 }
 

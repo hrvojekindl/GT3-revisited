@@ -124,6 +124,11 @@ CarNameFields car_name_fields(Language lang);
 // the MX-5 the US release calls a Miata is one model on every disc.) A maker with no dealer on
 // the map (the cars with no maker, a few prize cars) has no country: Unknown.
 enum class DriverSide : u8 { Left, Right, Unknown };
+// Which of a car's models a scene draws, as GT3 keeps them: the menus' (menu/cars: an empty
+// cockpit) or a race's, for the course's time of day (cars/day, cars/eve, cars/night: with the
+// driver in).
+enum class CarScene : u8 { Menu, Day, Eve, Night };
+inline constexpr size_t kCarScenes = 4;
 // A dealer map country whose traffic keeps left: "jp", "uk", "aus".
 bool country_drives_on_left(std::string_view country);
 // The side for a maker's country; Unknown for none.
@@ -293,7 +298,9 @@ struct ModCar {
     std::string label;  // table 30 label
     std::string mod;    // providing mod id (empty when loaded directly)
     std::string file;   // host path of the definition file
-    std::string donor;  // disc car whose records fill everything not defined
+    std::string donor;  // disc car whose records fill everything not defined (empty: an exported car)
+    bool exported = false; // exported from a disc (game/data/car_export.h): its own records, model files and sounds
+    std::string sound_dir; // host folder of its own engine sound banks (engine/<id>, normal0/<id>...); empty = the disc's
     bool electric = false;
     float regen_torque_nm = 0; // electric: lift-off regenerative torque at the motor shaft
     float regen_kw = 0;        // electric: regenerative power limit
@@ -302,9 +309,11 @@ struct ModCar {
     // hiss under load.
     float whine_order = 0;
     float whine_level = 1, inverter_level = 1;
-    // A body of its own: host path of a binary glTF (empty = the donor's
-    // shell), and its paint colours (name, RGB 0..1) in menu order.
-    std::string model_file;
+    // A body of its own: host paths of binary glTFs by CarScene, every scene filled when the
+    // car has one (empty = the donor's shell; resolve_model_files), and its paint colours
+    // (name, RGB 0..1) in menu order.
+    std::array<std::string, kCarScenes> model_files;
+    const std::string& model_file(CarScene s) const { return model_files[size_t(s)]; }
     std::string wheel; // rim (wheel/<label> on the disc); empty = the donor's
     std::optional<DriverSide> driver_side; // the side its file gives (CarDatabase::driver_side)
     float model_lower = 0; // metres to move a glTF body down from its own ground line
@@ -426,6 +435,7 @@ public:
     struct EngineSound {
         u16 id = 0;
         u8 variant = 0;
+        std::string dir; // a mod car's own banks (ModCar::sound_dir); empty = the disc's sound/ folders
     };
     EngineSound engine_sound(u64 engine, u64 muffler, u64 turbo) const;
     EngineSound engine_sound(const Car& c) const { return engine_sound(c.parts[6], c.parts[21], c.parts[12]); }
@@ -452,6 +462,10 @@ public:
     // Problems found while loading mod cars (one line each, naming the file).
     const std::vector<std::string>& mod_car_errors() const { return mod_car_errors_; }
     void add_mod_car_error(std::string e) { mod_car_errors_.push_back(std::move(e)); }
+    // Things a loaded mod car shows differently than its author may expect (one line each, naming the file): textures
+    // of its body the game draws white (gltf.h glb_image_warnings).
+    const std::vector<std::string>& mod_car_warnings() const { return mod_car_warnings_; }
+    void add_mod_car_warning(std::string w) { mod_car_warnings_.push_back(std::move(w)); }
 
 private:
     Language language_ = Language::US;
@@ -480,6 +494,7 @@ private:
     std::vector<ModMaker> mod_makers_;
     std::vector<ModEvent> mod_events_;
     std::vector<std::string> mod_car_errors_;
+    std::vector<std::string> mod_car_warnings_;
     std::string error_;
     bool unsupported_ = false;
 };

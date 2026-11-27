@@ -186,7 +186,15 @@ void ResultsOverlay::draw(SDL_Renderer* r, text::GameFonts& fonts, const std::ve
     const menu::Element* seiko = find(page, "z9_seiko");
     if (!title || !bar) return;
     Frame f{dst};
-    size_t n = rows.size();
+    // The rows shown (GT3's races have 6 cars, room for kShownRows): a bigger field's first kShownRows - 1 and the player's
+    // row, each with its own place.
+    std::vector<size_t> shown;
+    for (size_t i = 0; i < rows.size() && shown.size() < kShownRows; ++i) shown.push_back(i);
+    if (rows.size() > kShownRows) {
+        const auto mine = std::find_if(rows.begin(), rows.end(), [](const ResultRow& w) { return w.player; });
+        if (mine != rows.end() && size_t(mine - rows.begin()) >= kShownRows) shown.back() = size_t(mine - rows.begin());
+    }
+    size_t n = shown.size();
     // Bars: title (52 high) at y 44, then the rows and the term bar unroll downwards: each
     // bar's centre approaches (hPrev + hOwn) / 2 below the previous one by 0.19 per frame.
     // Without per-frame state we evaluate the closed form of that approach.
@@ -237,16 +245,17 @@ void ResultsOverlay::draw(SDL_Renderer* r, text::GameFonts& fonts, const std::ve
     // time (t_time right edge 612 - 12; the reference capture).
     for (size_t i = 0; i < n; ++i) {
         if (row_alpha[i] * view.alpha <= 0) continue;
+        const size_t k = shown[i];
         u8 a = u8(255 * row_alpha[i] * view.alpha);
         SDL_Color others{0xCC, 0xCC, 0xCC, a}, mine{0xFF, 0xC8, 0x00, a};
-        SDL_Color c = rows[i].player ? mine : others;
+        SDL_Color c = rows[k].player ? mine : others;
         float y = row_top[i] + 18;
-        text(r, fonts, f, 24 + 18, y, std::to_string(i + 1), "rank#1", 0.5f, 0.5f, others, text::HAlign::Center,
+        text(r, fonts, f, 24 + 18, y, std::to_string(k + 1), "rank#1", 0.5f, 0.5f, others, text::HAlign::Center,
              text::VAlign::Middle);
-        if (icons) (*icons)[i] = {f.x(66), f.y(y - 13), 58 * f.sx(), 26 * f.sy()}; // car picture at 66..124
-        text(r, fonts, f, 144, y, rows[i].name, "sw_16#1", 0.87f, 1.0f, c, text::HAlign::Left,
+        if (icons) (*icons)[k] = {f.x(66), f.y(y - 13), 58 * f.sx(), 26 * f.sy()}; // car picture at 66..124
+        text(r, fonts, f, 144, y, rows[k].name, "sw_16#1", 0.87f, 1.0f, c, text::HAlign::Left,
              text::VAlign::Middle, kGameText);
-        text(r, fonts, f, 600, y, rows[i].time, "sw_16#1", 0.87f, 1.0f, c, text::HAlign::Right, text::VAlign::Middle);
+        text(r, fonts, f, 600, y, rows[k].time, "sw_16#1", 0.87f, 1.0f, c, text::HAlign::Right, text::VAlign::Middle);
     }
 }
 
@@ -372,7 +381,7 @@ void LicenseResultOverlay::draw_fail(SDL_Renderer* r, text::GameFonts& fonts, in
 
 namespace {
 
-// Simple exam messages' update, then its timer's count: one call each a step.
+// SimpleExamMessages' update, then its timer's count: one call each a step.
 struct ExamMessageState {
     int state = 0, timer = -1;
     ee::F fade;
@@ -716,7 +725,7 @@ std::vector<ResultRow> result_menu_list(ResultList kind, bool finished, std::vec
 }
 
 bool practice_regrids(std::span<const u32> best) {
-    return !best.empty() && best[0] < kPracticeNoTime; // (a time below GT3's "no time")
+    return !best.empty() && best[0] < kPracticeNoTime; // (0x12E968, 0x133B40: a time below GT3's "no time")
 }
 
 std::vector<int> practice_grid(std::span<const u32> best) {
@@ -738,7 +747,7 @@ std::vector<int> practice_grid(std::span<const u32> best) {
 void practice_list_times(std::vector<ResultRow>& rows, std::span<const u32> best) {
     for (ResultRow& r : rows) {
         const size_t e = size_t(r.car + 1); // the entry: 0 the player, k opponent k - 1
-        r.time = menu_time_text(r.car >= -1 && e < best.size() ? best[e] : kPracticeNoTime);
+        r.time = menu_time_text(r.car >= -1 && e < best.size() ? best[e] : kPracticeNoTime); // (fn_0023B930)
     }
 }
 
@@ -746,9 +755,23 @@ void QuickMenu::draw(SDL_Renderer*, const SDL_FRect& dst) {
     if (!ctl_ || !renderer_) return;
     std::vector<menu::ElementDraw> list = ctl_->draw_list();
     // Code-filled widgets: named texts, class texts, then the list (quick_menu_column).
+    // The layouts list six rows with their places ("no1" .. "no6"), GT3's whole field. In a bigger one the sixth is the player's
+    // when they are further down, with their place.
+    size_t last = size_t(kQuickMenuRows) - 1;
+    if (rows_.size() > size_t(kQuickMenuRows)) {
+        const auto mine = std::find_if(rows_.begin(), rows_.end(), [](const ResultRow& w) { return w.player; });
+        const bool placed = std::any_of(list.begin(), list.end(), [](const menu::ElementDraw& d) {
+            return d.element && d.element->name == "no6" && (d.element->type & menu::Element::kText);
+        });
+        if (mine != rows_.end() && placed) last = std::max(last, size_t(mine - rows_.begin()));
+    }
     for (menu::ElementDraw& d : list) {
         if (!d.element || d.kind != menu::ElementDraw::Kind::Element) continue;
         const std::string& n = d.element->name;
+        if (last >= size_t(kQuickMenuRows) && n == "no6" && (d.element->type & menu::Element::kText)) {
+            d.text = std::make_shared<const std::string>(std::to_string(last + 1));
+            continue;
+        }
         if (auto it = texts_.find(n); it != texts_.end()) {
             d.text = std::make_shared<const std::string>(it->second);
             continue;
@@ -761,7 +784,8 @@ void QuickMenu::draw(SDL_Renderer*, const SDL_FRect& dst) {
         int i = -1;
         const QmColumn col = quick_menu_column(*d.element, i);
         if (col == QmColumn::None) continue;
-        const ResultRow* r = size_t(i) < rows_.size() ? &rows_[size_t(i)] : nullptr;
+        const size_t at = i == kQuickMenuRows - 1 ? last : size_t(i);
+        const ResultRow* r = at < rows_.size() ? &rows_[at] : nullptr;
         d.text = std::make_shared<const std::string>(!r                      ? std::string()
                                                      : col == QmColumn::Name ? r->name
                                                      : col == QmColumn::Time ? r->time

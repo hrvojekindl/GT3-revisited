@@ -2,7 +2,9 @@
 // demux/Movie tests, and (with GT3R_DISC) the real FMVs under stream/.
 
 #include "test_framework.h"
+#include "concept_discs.h"
 
+#include "disc/disc.h"
 #include "formats/ads.h"
 #include "formats/pss.h"
 #include "video/field_layout.h"
@@ -207,7 +209,8 @@ void put_slice_header(BitWriter& w, int row) {
     w.put(0, 1); // extra_bit_slice
 }
 
-Bytes build_i_picture(int tref) {
+// `flat`: every macroblock the same (no seam: FieldLayoutDetector casts no vote, so the movie stays whole).
+Bytes build_i_picture(int tref, bool flat = false) {
     BitWriter w;
     put_picture_header(w, tref, 1);
     for (int row = 0; row < kMbH; ++row) {
@@ -216,7 +219,8 @@ Bytes build_i_picture(int tref) {
         for (int mx = 0; mx < kMbW; ++mx) {
             int i = row * kMbW + mx;
             w.str("1"); // macroblock_address_increment 1
-            put_intra_mb(w, mb_luma(i), mb_cb(i), mb_cr(i), pred);
+            const int k = flat ? 0 : i;
+            put_intra_mb(w, mb_luma(k), mb_cb(k), mb_cr(k), pred);
         }
     }
     w.align();
@@ -801,14 +805,14 @@ namespace {
 
 // A video-only movie of `frames` pictures (an I picture, then zero-vector P pictures: all the same
 // picture, whose macroblock rows differ at the middle, so the player takes it as field-split) at
-// frame_rate_code's rate, one PES packet per picture with its PTS.
-Bytes timed_movie(int frame_rate_code, double fps, int frames) {
+// frame_rate_code's rate, one PES packet per picture with its PTS. `flat`: one grey picture (taken as whole).
+Bytes timed_movie(int frame_rate_code, double fps, int frames, bool flat = false) {
     Bytes s;
     const s64 base = 90000;
     for (int k = 0; k < frames; ++k) {
         Bytes v;
         if (k == 0) append(v, sequence_prefix(frame_rate_code));
-        append(v, k == 0 ? build_i_picture(0) : build_p_picture(k));
+        append(v, k == 0 ? build_i_picture(0, flat) : build_p_picture(k));
         if (k == frames - 1) append(v, sequence_end());
         append(s, pack_header());
         append(s, pes_packet(0xE0, v, base + s64(std::llround(k * 90000.0 / fps))));
@@ -861,6 +865,13 @@ Cadence play_cadence(int frame_rate_code, double fps, double hz, int frames) {
             if (std::abs(clock - t) > 1e-6 || std::abs(player.picture_time() - due) > 1e-6 ||
                 player.second_field() != second)
                 ++c.mismatches;
+            // Deinterlaced: the texture stacks a full picture per field, drawn whole into the box.
+            float tw = 0, th = 0;
+            SDL_GetTextureSize(player.texture(), &tw, &th);
+            SDL_FRect src, dst;
+            const SDL_FRect box{0, 0, 64, 48};
+            player.picture_rects(box, src, dst);
+            if (src.y != (second ? th / 2 : 0) || src.h * 2 != th || dst.y != box.y || dst.h != box.h) ++c.mismatches;
             const int field = int(std::lround(player.picture_time() * fps)) * 2 + int(player.second_field());
             if (field != last_field) {
                 if (last_field >= 0) ++c.per_field[run], ++c.fields;
@@ -879,6 +890,91 @@ Cadence play_cadence(int frame_rate_code, double fps, double hz, int frames) {
 }
 
 } // namespace
+
+// The picture left in the texture when another movie starts (a menu's movie switches, a loop's restarts) is drawn
+// as it was until the new movie's first picture replaces it, though the new movie's layout starts over.
+TEST(video_player_left_picture_keeps_layout) {
+    const Bytes split = timed_movie(5, 30.0, 4), flat = timed_movie(5, 30.0, 4, true);
+    SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* r = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    CHECK(r != nullptr);
+    if (!r) {
+        SDL_DestroySurface(surface);
+        return;
+    }
+    {
+        MoviePlayer p;
+        u64 now = 1'000'000'000;
+        p.set_time_source([&now] { return now; });
+        const SDL_FRect box{0, 0, 64, 48};
+        auto src = [&] {
+            SDL_FRect s, d;
+            p.picture_rects(box, s, d);
+            return s;
+        };
+        auto th = [&] {
+            float w = 0, h = 0;
+            SDL_GetTextureSize(p.texture(), &w, &h);
+            return h;
+        };
+        auto play = [&](const Bytes& s) {
+            p.start(std::make_unique<Movie>(buffer_reader(s), s.size()));
+            CHECK(p.wait_for_frame(2.0));
+        };
+        play(split);
+        p.update(r);
+        CHECK(src().h * 2 == th()); // one picture of the deinterlaced pair
+        play(flat);                 // no votes: its layout stays whole
+        CHECK(!p.field_split());
+        CHECK(src().h * 2 == th()); // still the split picture: one of the pair
+        p.update(r);
+        CHECK(src().y == 0 && src().h == th()); // the flat picture: whole
+        play(split);
+        CHECK(p.field_split());                 // decided before its first picture is up
+        CHECK(src().y == 0 && src().h == th()); // still the flat picture: whole
+        play(flat);                             // before any picture of the split movie came up
+        CHECK(src().y == 0 && src().h == th()); // still the flat picture: whole
+        play(split);
+        p.update(r);
+        CHECK(src().h * 2 == th());
+    }
+    SDL_DestroyRenderer(r);
+    SDL_DestroySurface(surface);
+}
+
+// A loop's next pass starts its layout over too (update() restarts the movie): every refresh across the seams draws
+// the field-split movie one picture of each deinterlaced pair at a time.
+TEST(video_player_loop_seam_keeps_layout) {
+    const Bytes split = timed_movie(5, 30.0, 4);
+    SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* r = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    CHECK(r != nullptr);
+    if (!r) {
+        SDL_DestroySurface(surface);
+        return;
+    }
+    {
+        MoviePlayer p;
+        u64 now = 1'000'000'000;
+        p.set_time_source([&now] { return now; });
+        p.start_loop([&split] { return std::make_unique<Movie>(buffer_reader(split), split.size()); });
+        int drawn_whole = 0, shown = 0;
+        for (int k = 0; k < 30; ++k) { // 0.5 s at 60 Hz: about four passes of the 4-picture movie
+            now = 1'000'000'000 + u64(std::llround((0.0008 + k / 60.0) * 1e9));
+            p.wait_for_frame(2.0); // (false at the end of a pass: update() starts the next)
+            if (p.update(r)) ++shown;
+            float th = 0;
+            SDL_GetTextureSize(p.texture(), nullptr, &th);
+            SDL_FRect src, dst;
+            p.picture_rects(SDL_FRect{0, 0, 64, 48}, src, dst);
+            if (src.h * 2 != th) ++drawn_whole;
+        }
+        CHECK(shown > 8); // crossed at least two seams
+        CHECK(drawn_whole == 0);
+    }
+    SDL_DestroyRenderer(r);
+    SDL_DestroySurface(surface);
+}
 
 // PAL movies (25 fps, two fields a frame) on 60 and 120 Hz displays, against NTSC's 30 fps: every
 // refresh shows the field its timestamps say, nothing is dropped, and the fields take turns in the
@@ -1073,6 +1169,32 @@ TEST(video_disc_opening) {
     CHECK(nonzero);
 }
 
+// Concept's openings are progressive pictures that begin on a grid with a line on the seam row
+// (issue 404): the player shows them whole. Its course and menu movies are field-split, as GT3's.
+TEST(video_concept_disc_field_layout) {
+    const std::vector<std::string> discs = test::concept_discs();
+    if (discs.empty()) SKIP("GT3R_DISC_CONCEPT not set");
+    for (const std::string& path : discs) {
+        std::unique_ptr<Disc> d = Disc::open(path);
+        Volume& vol = d->volume();
+        int checked = 0;
+        for (const char* name : {"stream/opening.pss", "stream/opening_GTCJP.pss", "stream/akasaka_full.pss",
+                                 "stream/arcade_menu_gtc.pss"}) {
+            const Volume::Entry* e = vol.find(name);
+            if (!e) continue;
+            auto m = open_disc_movie(vol, *e);
+            FieldLayoutDetector det;
+            Frame f;
+            while (!det.decided() && m->next_frame(f)) det.add(f);
+            const bool opening = std::strncmp(name, "stream/opening", 14) == 0;
+            if (det.field_split() == opening) std::printf("  %s %s: field_split %d\n", path.c_str(), name, det.field_split());
+            CHECK(det.decided() && det.field_split() != opening);
+            ++checked;
+        }
+        CHECK(checked >= 3);
+    }
+}
+
 TEST(video_disc_all_headers) {
     Disc* disc = test::any_region_disc();
     if (!disc) SKIP("needs GT3R_DISC");
@@ -1159,6 +1281,104 @@ TEST(video_field_layout_synthetic) {
     CHECK(det.decided() && det.field_split());
     Frame w = weave_fields(f);
     CHECK(w.y[0] == f.y[0] && w.y[64] == f.y[32 * 64] && w.y[2 * 64] == f.y[64]);
+}
+
+// A one-line stripe on (or just above) the seam row of a progressive picture, as in the grid that
+// opens the Concept openings, is not a field seam.
+TEST(video_field_layout_stripe_on_seam) {
+    Frame f;
+    f.width = 64;
+    f.height = 64;
+    f.y.assign(64 * 64, 0);
+    f.u.assign(32 * 32, 128);
+    f.v.assign(32 * 32, 128);
+    for (int line : {32, 31}) {
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 64; ++x) f.y[y * 64 + x] = u8(40 + y + (x & 3));
+        for (int x = 0; x < 64; ++x) f.y[line * 64 + x] = 220;
+        CHECK(seam_ratio(f) < FieldLayoutDetector::kSeamThreshold);
+        FieldLayoutDetector det;
+        for (int i = 0; i < FieldLayoutDetector::kVotes; ++i) det.add(f);
+        CHECK(det.decided() && !det.field_split());
+    }
+}
+
+namespace {
+
+// A 4:2:0 frame of w x h from per-pixel functions of (x, y) for luma and chroma.
+template <class FY, class FC> Frame make_frame(int w, int h, FY fy, FC fc) {
+    Frame f;
+    f.width = w;
+    f.height = h;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) f.y.push_back(u8(fy(x, y)));
+    for (int y = 0; y < f.chroma_height(); ++y)
+        for (int x = 0; x < f.chroma_width(); ++x) f.u.push_back(u8(fc(x, y))), f.v.push_back(u8(255 - fc(x, y)));
+    return f;
+}
+
+// The field-split form of a progressive picture: even lines on top, odd lines below (chroma too).
+Frame split_fields(const Frame& p) {
+    Frame f = p;
+    auto split = [](const std::vector<u8>& src, std::vector<u8>& dst, int w, int h) {
+        for (int y = 0; y < h; ++y)
+            std::memcpy(&dst[size_t((y & 1) * (h / 2) + y / 2) * w], &src[size_t(y) * w], size_t(w));
+    };
+    split(p.y, f.y, p.width, p.height);
+    split(p.u, f.u, p.chroma_width(), p.chroma_height());
+    split(p.v, f.v, p.chroma_width(), p.chroma_height());
+    return f;
+}
+
+} // namespace
+
+// Motion-adaptive deinterlacing (field_layout.h): a still picture comes back whole and sharp for
+// both fields (bob would halve its vertical detail and differ between the fields); a picture whose
+// neighbouring fields differ wildly gets its missing lines from the field's own lines, as bob does.
+TEST(video_deinterlace_fields) {
+    const int w = 32, h = 16;
+    // A curved vertical ramp with horizontal detail: bob (the mean of a field's lines) misses its
+    // curve; the other field's lines have it. (One-line stripes would count as combing.)
+    Frame still = make_frame(w, h, [](int x, int y) { return y * y + (x * 3) % 7; },
+                             [](int x, int y) { return 60 + y * y + x % 3; });
+    Frame f = split_fields(still);
+    Frame out;
+    deinterlace_fields(f, f, f, out);
+    CHECK(out.fields_stacked && out.width == w && out.height == 2 * h && out.pts == f.pts);
+    CHECK(out.y.size() == size_t(w * 2 * h) && out.u.size() == size_t(f.chroma_width() * 2 * f.chroma_height()));
+    const size_t ny = still.y.size(), nc = still.u.size();
+    CHECK(std::equal(still.y.begin(), still.y.end(), out.y.begin()));
+    CHECK(std::equal(still.y.begin(), still.y.end(), out.y.begin() + ptrdiff_t(ny)));
+    CHECK(std::equal(still.u.begin(), still.u.end(), out.u.begin()) &&
+          std::equal(still.v.begin(), still.v.end(), out.v.begin() + ptrdiff_t(nc)));
+    int bob_off = 0;
+    for (int y = 1; y + 1 < h; y += 2)
+        bob_off += (still.y[size_t(y - 1) * w] + still.y[size_t(y + 1) * w]) / 2 != still.y[size_t(y) * w];
+    CHECK(bob_off > 0);
+
+    // Moving: the frames around are black and white, so the temporal guess is useless and every
+    // missing line is the mean of the field's lines above and below it.
+    Frame black = split_fields(make_frame(w, h, [](int, int) { return 0; }, [](int, int) { return 128; }));
+    Frame white = split_fields(make_frame(w, h, [](int, int) { return 255; }, [](int, int) { return 128; }));
+    Frame ramp = split_fields(make_frame(w, h, [](int x, int y) { return 20 + 12 * y + x; }, [](int, int) { return 128; }));
+    deinterlace_fields(black, ramp, white, out);
+    int off = 0;
+    for (int field = 0; field < 2; ++field)
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const int got = out.y[size_t(field * h + y) * w + x];
+                // The field's own lines are kept; the others are the mean of their neighbours
+                // (clamped at the picture's edges).
+                const int own = (y & 1) == field;
+                const int above = std::clamp(y - 1, field, h - 2 + field), below = std::clamp(y + 1, field, h - 2 + field);
+                const int want = own ? 20 + 12 * y + x : ((20 + 12 * above + x) + (20 + 12 * below + x)) >> 1;
+                off += got != want;
+            }
+    CHECK(off == 0);
+
+    CHECK(can_deinterlace(f));
+    Frame odd = make_frame(w, 30, [](int, int) { return 0; }, [](int, int) { return 0; });
+    CHECK(!can_deinterlace(odd)); // fields of an odd number of chroma lines
 }
 
 TEST(video_disc_course_ipic) {

@@ -409,6 +409,7 @@ void RaceScreen::tick(App& app, const PadState& pad) {
     }
     {
         if (se_on()) update_tyre_sounds(app, s);
+        step_car_looks(float(dt));
         // Force feedback is sent once per frame: keep the strongest hits of the frame's steps.
         ffb_wall_ = std::max(ffb_wall_, std::fabs(vehicle_->wall_impulse()));
         ffb_car_ = std::max(ffb_car_, std::fabs(vehicle_->car_impulse()));
@@ -440,6 +441,15 @@ void RaceScreen::tick(App& app, const PadState& pad) {
 // GT3R_RACE_TRACE=<file>: one line per race step with the player's car after it, for comparing a
 // run with its replay ("L" live, "R" replay; the ticks simulated so far, the driver kind the step
 // ran with, position and orientation as exact hex floats, the speed).
+void RaceScreen::step_car_looks(float seconds) {
+    if (car_visual_) car_visual_->step_look(0, vehicle_->state(), seconds);
+    if (field_ && field_->has_second())
+        if (const CarVisual* v2 = car2_visual_ ? car2_visual_.get() : car_visual_.get()) v2->step_look(1, field_->second_state(), seconds);
+    if (const RaceField* f = exact_field())
+        for (int i = 0; i < f->opponents() && size_t(i) < opp_visuals_.size(); ++i)
+            if (opp_visuals_[size_t(i)]) opp_visuals_[size_t(i)]->step_look(2 + i, f->opponent_state(i), seconds);
+}
+
 void RaceScreen::trace_tick() {
     static FILE* f = [] {
         const char* p = SDL_getenv("GT3R_RACE_TRACE");
@@ -489,7 +499,7 @@ int RaceScreen::pod_prompt(int player) const {
 }
 
 void RaceScreen::update_drive(App& app, double dt) {
-    // A pod race's three notes (pod race display: with the race live, 3 s each, the first 2 s in, so they run
+    // A pod race's three notes (RacePODDisplay, 0x1AF650: with the race live, 3 s each, the first 2 s in, so they run
     // through the start's countdown; one player's race only, the 2 player display has none).
     if (!pod_intro_posted_ && !two_player_ && !replaying_ && !backdrop_ && !quick_ && !attract_ && pod_race()) {
         pod_intro_posted_ = true;
@@ -601,7 +611,7 @@ void RaceScreen::update_drive(App& app, double dt) {
                     quick_ = finish_menu_shown_ = true;
                     camera_.set_mode(drive_camera_);
                 }
-            } else if (demo_over()) { // as GT3's licence menu: on the step its replay ends
+            } else if (demo_over()) { // as GT3's licence menu: on the step its replay ends (0x134C30)
                 restart();
                 quick_ = true;
                 demo_tick_ = 0, demo_logged_ = false;
@@ -629,7 +639,7 @@ void RaceScreen::update_drive(App& app, double dt) {
     auto rpressed = [&](PadButton b) { return (race_pressed & (1u << unsigned(b))) != 0; };
     // (Replays too: only Start opens their pause, presentation §G; nothing else skips one.)
     if (!paused_ && (m.pressed(PadButton::Start) || rpressed(PadButton::Start))) {
-        if (race_preview_) { // no pause: Start ends it (play mode 2, the race's frame update); no laps or time limit do
+        if (race_preview_) { // no pause: Start ends it (play mode 2, RaceBasic::vf29); no laps or time limit do
             attract_interrupted_ = true;
             begin_exit_transition(ExitThen::RunEnd);
             return;
@@ -721,7 +731,7 @@ void RaceScreen::update_drive(App& app, double dt) {
     }
     // A pod race's disqualification (pod_dq_t_): one player, the examination message's timeline (ConceptExamMessage:
     // 1 s, the message faded in, held and faded out, then 4 s or confirm), then the race ends (event 1) as a run that
-    // did not finish; two players, once both halves hold their message (two-player pod race display's update). Leaving takes 2
+    // did not finish; two players, once both halves hold their message (RacePOD2PDisplay's update). Leaving takes 2
     // more frames, as after a FAIL.
     if (!replaying_ && !finish_menu_shown_ && exit_transition_ < 0) {
         bool leave = false;
@@ -778,6 +788,7 @@ void RaceScreen::update_drive(App& app, double dt) {
     if (replaying_ || attract_) update_replay_focus(dt); // the followed car (TARGET), the pad's views and cuts
     update_camera_manager(dt);                           // the music's cut requests, view mode 1's cuts
     update_race_camera(pad, dt);
+    if (director_.take_aim_cut()) aim_left_ = aim_total_ = 0; // a new shot ends the aim's move (presentation §G4e)
     update_shot_filter();
     if (const float d = director_.take_dissolve(); d > 0) start_dissolve(d); // a course record's own
 
@@ -876,8 +887,8 @@ void RaceScreen::update_pylons(double dt) {
         for (int i = 0; i < f->opponents(); ++i) add(f->opponent_state(i), f->opponent_facts(i));
     const track::Track* rt = track_->runtime();
     unsigned hits = pylons_.step(track_->query(), cars, dt, rt ? std::span<const track::WallLine>(rt->wall_lines()) : std::span<const track::WallLine>{});
-    // The conductor's hit rule for every touch (kind 2: licences and time trials fail on it). GT3 runs the
-    // course's rigid bodies after the frame's race step (the race's frame update: the step), so a touch the step
+    // The conductor's virtual 41 for every touch (kind 2: licences and time trials fail on it). GT3 runs the
+    // course's rigid bodies after the frame's race step (RacePS2Base::vf29: the step, then 0x1A21E0), so a touch the step
     // made reaches the car before the next step, as it does here (pylons after the step, the hit before the next one).
     if ((hits & 1u) && solo_field_ && !replaying_ && !demo_) exact_report_hit(*solo_field_, 0, 2);
     if ((hits & 1u) && !pylon_hit_) {

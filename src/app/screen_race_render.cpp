@@ -210,6 +210,7 @@ int RaceScreen::car_lamp_index(const sim::VehicleState& s, size_t slot) const {
 // weakened by the car's dirt (the player's garage car; others are clean).
 CarLook RaceScreen::car_look(const sim::VehicleState& s, bool player, size_t slot) const {
     CarLook look;
+    look.slot = int(slot);
     const SunParams& e = sun_.params();
     const track::Track* rt = track_ ? track_->runtime() : nullptr;
     if (rt && e.has_env && point_lights_.active()) {
@@ -503,7 +504,7 @@ HudData RaceScreen::hud_data(int player) {
     d.mode = hud_mode(sel);
     if (preset_.hud_mode >= 0 && !hud_layout(HudMode(preset_.hud_mode)).empty()) d.mode = HudMode(preset_.hud_mode);
     d.live = !replaying_ && !attract_;
-    // A pod race's stop prompts, in the car message's place (the display's message draw: 0x10 "stop and pull
+    // A pod race's stop prompts, in the car message's place (the display's message draw, 0x1907F0: 0x10 "stop and pull
     // the handbrake" in amber, 0x11 "go back to the stop area" in red). The disc's texts; where its text file has none
     // (2001 Tokyo, whose program holds Japanese defaults), the English release's (Tokyo-Geneva's American English).
     if (const int prompt = pod_prompt(p2 ? 1 : 0); prompt == 0x10 || prompt == 0x11) {
@@ -546,7 +547,7 @@ HudData RaceScreen::hud_data(int player) {
         // Flying start: START for 1 s from the signal at the line (presentation §B2).
         d.countdown = race_time_ - flying_go_t_ < 1.0 ? 0 : -1;
     }
-    // Free practice: the player's place among the field by best lap (the conductor's ranking, car + 0x1465).
+    // Free practice: the player's place among the field by best lap (the conductor's ranking 0x1F24C0, car + 0x1465).
     if (!field_ && free_run_)
         if (const RaceField* f = exact_field(); f && f->opponents() > 0) {
             d.cars = f->opponents() + 1;
@@ -769,7 +770,7 @@ void RaceScreen::render_drive(App& app, Ui& ui) {
             SDL_FRect box = licence_box ? SDL_FRect{menu_dst.x + 32 * sx, menu_dst.y + 58 * sy, 280 * sx, 210 * sy}
                                         : menu_dst;
             // Concept's course license menu (without the pace car): its box on the right, (332, 62, 280, 242) of the
-            // Tokyo-Geneva program's 512-line frame (shortmenu concept license render).
+            // Tokyo-Geneva program's 512-line frame (ShortmenuConceptLicenseRender, 0x1337F8).
             if (licence_box && concept_menus())
                 box = {menu_dst.x + 332 * sx, menu_dst.y + 62.0f * 448.0f / 512.0f * sy, 280 * sx, 242.0f * 448.0f / 512.0f * sy};
             render::Vec3 eye = camera_.eye();
@@ -780,6 +781,9 @@ void RaceScreen::render_drive(App& app, Ui& ui) {
                           smoke_view(camera_, box.w / box.h * CameraRig::kPixelAspect, camera_.fovy()));
             spark_pass_ = false;
             wheel_view_ = nullptr;
+            // The car's reflection map around the box's car, every frame as in the race (without it
+            // the box showed none before a run, then the map of wherever the last run ended).
+            update_env_cube();
             render::DrawOptions bo = draw_options();
             if (!licence_box) apply_depth_of_field(bo); // (the licence box: GT3's 2P-style pass, none)
             view_->draw(ui.renderer(), box, camera_.view(), camera_.projection(box.w / box.h), eye, items_, bo);
@@ -840,15 +844,19 @@ void RaceScreen::render_drive(App& app, Ui& ui) {
     Uint64 h_e1 = SDL_GetTicksNS();
     hitch::env_ms = double(h_e1 - h_e0) / 1e6;
     render::Vec3 eye = camera_.eye();
-    // In-car view: own car not drawn; a replay's on-board car mount: the followed car not drawn.
-    // Ours: a custom camera whose car would block its view fades it out (and back in after);
-    // fully faded, it is not drawn.
+    // In-car view: own car not drawn; a replay's on-board car mount: the car it rides not drawn
+    // (the followed car, or the partner's for mode 2's on-board cut). Ours: a custom camera whose
+    // car would block its view fades it out (and back in after); fully faded, it is not drawn.
     const bool mount_in = camera_.replay_on_board();
     const float car_fade = own_car_fade(camera_.body_blocks_view());
     const bool hide_target = camera_.hides_car() || mount_in || car_fade <= 0;
     const bool followed_player = !(field_ && replay_focus_ >= 0);
-    const bool own_car = !(hide_target && followed_player);
-    const int hidden = hide_target && !followed_player ? replay_focus_ : -1;
+    // The car the camera rides: 0 the player's, i the opponent i - 1.
+    const int ridden = field_ && camera_.replay_on_partner() && onboard_partner_ >= 0 ? onboard_partner_
+                       : followed_player                                                ? 0
+                                                                                        : replay_focus_ + 1;
+    const bool own_car = !(hide_target && ridden == 0);
+    const int hidden = hide_target && ridden > 0 ? ridden - 1 : -1;
     hidden_opponent_ = hidden;
     // The wheels: GT3 blurs them in the 1P frame, not in the 2P halves (docs/formats/car_model.md
     // "Wheel spin blur").
@@ -885,7 +893,7 @@ void RaceScreen::render_drive(App& app, Ui& ui) {
     remove_wet_road(wet_items); // (the wet road's frame items belong to this view only)
     hitch::draw_ms = double(SDL_GetTicksNS() - h_c1) / 1e6;
     hitch::meshes = view_->stats().meshes_drawn;
-    if (!replaying_ && !race_preview_ && camera_.shows_mirror() && (!split || horizontal))
+    if (!replaying_ && !demo_replay() && !race_preview_ && camera_.shows_mirror() && (!split || horizontal)) // (no mirror in a replay's or demonstration's driver's view)
         draw_mirror(app, ui, rect, o, false, split);
     if (split) {
         if (!view2_) view2_ = std::make_unique<render::View3D>(*app.gpu());
@@ -919,7 +927,7 @@ void RaceScreen::render_drive(App& app, Ui& ui) {
             ui.fill(0, dst.y + dst.h - 212 * k, W, 64 * k, Color{51, 51, 51, 255});
             ui.fill(0, dst.y + dst.h - 148 * k, W, 148 * k, Color{0, 0, 0, 255});
         } else {
-            // Gran Turismo Concept's page has no band: the race's view ends 13 + 256 lines down (the viewport), the
+            // Gran Turismo Concept's page has no band: the race's view ends 13 + 256 lines down (0x159A98's viewport), the
             // frame below it stays clear, the logger display is drawn over it and the page's windows over that.
             ui.fill(0, dst.y + 269 * k, W, H - (dst.y + 269 * k), Color{0, 0, 0, 255});
             draw_logger_display(app, ui);
@@ -962,7 +970,7 @@ void RaceScreen::render_drive(App& app, Ui& ui) {
             ui.text(10, 52, line, Color{200, 205, 215, 200});
         }
     }
-    // A pod race's disqualification (the pod display's examination message, simple exam messages: the disc's
+    // A pod race's disqualification (the pod display's examination message, SimpleExamMessages: the disc's
     // RACEDISPLAY_Disqualification fading in and out, ConceptExamMessage): over the whole race with one player, in each
     // disqualified player's half with two (held there; the race ends once both are).
     // The game's wide mode (the text's 0.75 x scale): our screen wider than 4:3, as the HUD's 16:9 rules.
@@ -1126,9 +1134,9 @@ bool RaceScreen::glow_blocked(const GlowCars& cars, const render::Vec3& a, const
 }
 
 // The Analyzer's REPLAY: the logger display (racedetail mode LOGGER) over the race's cars, as the race draws it while the
-// data logger plays (race info + 0x70). Gran Turismo 3 (the solo race): the display twice, track A's car
+// data logger plays (race info + 0x70). Gran Turismo 3 (RaceSolitaire::vf46, 0x187D30): the display twice, track A's car
 // (car 0) on the whole frame and track B's (car 1, when there is one) 560 to the right; Gran Turismo Concept
-// (the solo race): track A's car alone, its rows under the Analyzer's page.
+// (RaceSolitaire::vf47): track A's car alone, its rows under the Analyzer's page.
 void RaceScreen::draw_logger_display(App& app, Ui& ui) {
     const UiRect pic = ui.picture43();
     const SDL_FRect frame = original_res_ ? frame_rect_ : SDL_FRect{pic.x, pic.y, pic.w, pic.h};

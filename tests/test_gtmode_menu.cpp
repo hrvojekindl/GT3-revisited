@@ -337,6 +337,63 @@ TEST(gtmode_menu_disc_tune_shop_flow) {
     CHECK(f.controller()->page_name() == "ts/ts_eg");
 }
 
+// The tune shop's weight reduction stages are bought in order (issue 441): the later stages' buttons refuse, darkened,
+// until the stage before is owned. Any region's disc.
+TEST(gtmode_menu_disc_weight_reduction_order) {
+    Disc* disc = test::any_region_disc();
+    if (!disc) SKIP("needs GT3R_DISC");
+    set_env("GT3R_GTMODE_SAVE", "/nonexistent-gt3r-test/gtmode.sav");
+    set_env("GT3R_GTMODE_NOSAVE", "1");
+    game::reset_gt_mode_menu_for_tests();
+    game::install_gt_mode_menu();
+    Vfs vfs(&disc->volume());
+    const Language lang = vfs.region().default_language();
+    vfs.set_language(lang);
+    GameFlow f(vfs_reader(vfs), text::language_code(lang));
+    f.start();
+    settle(f);
+    game::GtModeSession* s = game::gt_mode_session();
+    CHECK(s != nullptr);
+    if (!s) return;
+    game::GtMode& gt = s->gt();
+    gt.state().credits = 1000000 * (lang == Language::JP ? 100 : 1);
+    CHECK(gt.buy_car("r34_gtr_v_99") == 0);
+    choose(f, "gt_mode");
+    settle(f);
+    choose(f, "ts_ts");
+    choose(f, "bg6");
+    CHECK(f.controller()->page_name() == "ts/ts_ot");
+    auto dark = [&](const std::string& name) {
+        for (const menu::ElementDraw& d : f.draw_list())
+            if (d.element && d.element->name == name) return d.brightness == 0.5f;
+        return false;
+    };
+    auto refused = [&](const char* name) {
+        f.take_sounds();
+        choose(f, name);
+        const std::vector<std::string> se = f.take_sounds();
+        return f.controller()->page_name() == "ts/ts_ot" && std::find(se.begin(), se.end(), "disable") != se.end();
+    };
+    auto buy = [&](const char* row, const char* part) {
+        choose(f, row);
+        choose(f, part);
+        CHECK(f.controller()->page_name() == "ts/ts_buy_sure4");
+        choose(f, "yes1");
+        settle(f);
+        press(f, MenuKey::Cancel);
+        if (f.controller()->page_name() != "ts/ts_ot") press(f, MenuKey::Cancel);
+        CHECK(f.controller()->page_name() == "ts/ts_ot");
+    };
+    CHECK(!dark("item1") && dark("item2") && dark("item3") && !dark("item6"));
+    CHECK(refused("item3") && refused("item2"));
+    buy("item1", "wtr_1");
+    CHECK(gt.owns(27) && !dark("item2") && dark("item3") && refused("item3"));
+    buy("item2", "wtr_2");
+    CHECK(gt.owns(28) && !dark("item2") && !dark("item3"));
+    buy("item3", "wtr_3");
+    CHECK(gt.owns(29));
+}
+
 // The car spec pages' weight, torque and ratios: the built car's weight (spec +0x2A, with the weight reduction parts) and
 // its peak, "%.3t" ratios; the dealer's catalog torque, the garage's built one. The dealer's Viper GTS as the original's
 // dealer page shows it (1531 kg, 449 HP: 3.409 and 0.229; 489.66 ft.lb);
@@ -372,9 +429,11 @@ TEST(gtmode_menu_disc_car_specs) {
     CHECK(f.controller()->page_name() == "hm/hm_car_spec");
     CHECK(widget_text(f, "spec_weight") == "1560 kg");
     const std::string pw = widget_text(f, "spec_p_w_ratio_real"), tw = widget_text(f, "spec_t_w_ratio_real");
-    // The built torque, run in (97 %): 45.6 kgf.m through the power's HP factor, with the ft.lb label on NTSC-U.
+    // The built torque, run in (97 %): 45.6 kgf.m in the torque's unit, ft.lb (x 7.2329) on NTSC-U. GT3 printed the
+    // kgf.m figure through the power's HP factor under the ft.lb label ("45.0ft.lb", issue 377).
     const std::string torque = widget_text(f, "spec_max_torque_real");
-    CHECK(lang != Language::US || torque == "45.0ft.lb/4500rpm");
+    CHECK(lang != Language::US || torque == "330.3ft.lb/4500rpm");
+    CHECK(lang == Language::US || torque.find("kgf.m/4500rpm") != std::string::npos);
     std::string last_pw = pw, last_tw = tw;
     const char* const kStage[3] = {"1450 kg", "1388 kg", "1326 kg"};
     for (int k = 0; k < 3; ++k) {
@@ -1092,7 +1151,7 @@ TEST(gtmode_menu_disc_garage_wheel_list) {
     choose(f, "buy3");
     // A row longer than the window (13 buttons, 828 units): left-aligned near the start, the
     // cursor's button centred in the middle, right-aligned at the end; the scroll bar and its
-    // pinch at bar x - offset x bar w / row w, window w x bar w / row w wide (GT3's scroll bar).
+    // pinch at bar x - offset x bar w / row w, window w x bar w / row w wide (GT3's ScrollBar).
     for (const char* w : {"bbw006_s", "bbw007_s", "bbw008_s", "bbw009_s", "bbw010_s", "bbw011_s", "bbw012_s",
                           "bbw013_s", "duw001_s"})
         CHECK(gt.buy_wheel(w));
@@ -1167,7 +1226,7 @@ TEST(gtmode_menu_disc_garage_wheel_list) {
     game::reset_gt_mode_menu_for_tests();
 }
 
-// The code-drawn vertical lists on the disc's pages as GT3's vertical button list (menus §4.6,
+// The code-drawn vertical lists on the disc's pages as GT3's vertical ButtonList (menus §4.6,
 // §9.7; gt_mode §5, §8, §17.2, §19):
 // the garage and trade lists (the 24-unit "car1" rows 28 apart in the 304-unit window), Cars
 // Permitted (the 20-unit rows 24 apart in 232) and the records (the 56-unit bars 60 apart in
@@ -1710,7 +1769,7 @@ TEST(gtmode_menu_disc_record_name_entry) {
     // A new 0-400 m record: the name entry page.
     CHECK(f.control() == "name_entry" && f.controller()->page_name() == "name_entry");
     MenuController* c = f.controller();
-    // One key cursor over the whole grid (free button rows), the column kept across rows.
+    // One key cursor over the whole grid (FreeButton rows), the column kept across rows.
     {
         auto highlighted = [&] {
             int n = 0;
@@ -1763,7 +1822,26 @@ TEST(gtmode_menu_disc_record_name_entry) {
     press(f, MenuKey::R1);
     CHECK(end_x > 0 && mid_x > 0 && mid_x < end_x && caret_x() == end_x && s->name_box.cursor == 3);
     CHECK(c->set_focus("free_command"));
-    press(f, MenuKey::Confirm); // OK
+    f.tick(key_bit(MenuKey::Confirm)); // OK
+    for (int i = 0; i < 8; ++i) f.tick(0);
+    {
+        // The decide glow lies over the OK key's highlight, not its wider row (issue 432).
+        const menu::ElementDraw *glow = nullptr, *hl = nullptr;
+        const std::vector<menu::ElementDraw> list = f.draw_list();
+        for (const menu::ElementDraw& d : list) {
+            if (d.kind == menu::ElementDraw::Kind::Glow) glow = &d;
+            else if (d.element && d.element->name == "|ok") hl = &d;
+        }
+        CHECK(glow && hl);
+        if (glow && hl) {
+            auto box = [](const menu::ElementDraw& d) {
+                const SDL_FRect b = d.has_box ? d.box : SDL_FRect{d.element->x, d.element->y, d.element->w, d.element->h};
+                return SDL_FRect{b.x + d.dx, b.y + d.dy, b.w, b.h};
+            };
+            const SDL_FRect g = box(*glow), h = box(*hl);
+            CHECK(g.x == h.x && g.y == h.y && g.w == h.w && g.h == h.h);
+        }
+    }
     settle(f);
     CHECK(f.control() == "gt_mode" && f.controller()->page_name() == "mt/mt");
     // The name is saved with the record once the page closes (the result was saved before it).

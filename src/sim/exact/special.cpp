@@ -24,13 +24,13 @@ struct MoodSteps {
 constexpr MoodSteps kSteps60{0x78, 0x18, 0x24, 0x1E, 0x30}, kSteps50{0x64, 0x14, 0x1E, 0x19, 0x28};
 const MoodSteps& mood_steps(const Car& c) { return pal_rate(c) ? kSteps50 : kSteps60; }
 
-// The nod's position from its phase (later): up over a quarter of the period, down to minus that, back to 0.
+// The nod's position from its phase (later 0x1DB2C8): up over a quarter of the period, down to minus that, back to 0.
 int nod(const MoodSteps& k, u8 phase) {
     const int half = k.period / 2, q = half / 2;
     return phase > half + q ? int(phase) - k.period : phase <= q ? int(phase) : half - int(phase);
 }
 
-// Car i's whole laps behind car j with the gap folded into half a lap.
+// 0x1ED5E0: car i's whole laps behind car j with the gap folded into half a lap.
 int laps_apart(int i, int j, const GapMatrix& g, F lap) {
     int laps = g.laps[size_t(i)][size_t(j)];
     const F gap = g.gap[size_t(i)][size_t(j)], half = lap * F::raw(0x3F000000);
@@ -83,8 +83,8 @@ void set_mood(Car& c, const MoodTables& k, int mood, int time) {
 
 void pass_by_step(PassByState& p, const Proximity& k, int n, bool pal_rate) {
     const s16 cap = pal_rate ? 250 : 300, held = pal_rate ? 51 : 61; // (a second and a step)
-    for (size_t i = 0; i < size_t(n) && i < 8; ++i)
-        for (size_t j = 0; j < size_t(n) && j < 8; ++j) {
+    for (size_t i = 0; i < size_t(n) && i < kMaxCars; ++i)
+        for (size_t j = 0; j < size_t(n) && j < kMaxCars; ++j) {
             if (i == j) continue;
             s16& t = p.timer[i][j];
             if (F{} < k.slip[i][j]) {
@@ -181,6 +181,32 @@ void mood_step(Car& c, const MoodTables& k, int rival, bool all_soft) {
     if (++s[4] >= n.period) s[4] = 0;
 }
 
+sim::VehicleState::Special special_look(const Car& c, const MoodTables& k) {
+    sim::VehicleState::Special out;
+    const u8 kind = c.p.special;
+    const auto& s = c.later.special;
+    if (kind == 2 || (kind >= 8 && kind <= 10)) { // (0x1DC268)
+        u32 bits;
+        std::memcpy(&bits, s.data(), 4);
+        out.wing = F::raw(bits).host();
+    }
+    if (kind != 1) return out;
+    const MoodSteps& n = mood_steps(c);
+    const int fade = s8(s[3]);
+    if (fade <= n.fade) { // the new class fading in (0x1DBC68)
+        out.lamp = k.lamp[s[1] & 0xF];
+        out.lamp_weight = float(n.fade - fade) / float(n.fade);
+    } else { // the class before fading out
+        out.lamp = k.lamp[s[1] >> 4];
+        out.lamp_weight = float(fade - n.fade) / float(n.fade_x - n.fade);
+    }
+    out.lean = 0.5f - float(s8(s[5])) / float(2 * n.lean); // (0x1DBD30)
+    out.nod = 0.5f + float(nod(n, s[4])) / (float(n.period) * 0.5f);
+    out.mood = s[1] & 0xF;
+    out.mood_new = s[6];
+    return out;
+}
+
 bool sitting(const Car& c) { return c.later.special[0] == (pal_rate(c) ? 0x1D : 0x22); }
 
 F pod_spring(const Car& c, int i, F k) {
@@ -200,9 +226,9 @@ void hit_mood(Car& c, const MoodTables& k, s32 kind, s32 part) {
     if (c.p.special != 1 || gt3_program(c.behaviour.rule(Rule::HitReport))) return;
     const int hold = pal_rate(c) ? 0xAF : 0xD2; // (a part of the body: its own time; 50 steps a second: five sixths)
     switch (kind) {
-    case 0: return set_mood(c, k, kMoodHit, -1);   // a wall (later)
-    case 2: return set_mood(c, k, kMoodAngry, -1);
-    case 1: break;                                 // a car: by the part
+    case 0: return set_mood(c, k, kMoodHit, -1);   // a wall (later 0x1DB818)
+    case 2: return set_mood(c, k, kMoodAngry, -1); // (0x1DB998)
+    case 1: break;                                 // a car: by the part (0x1DB860)
     default: return;
     }
     if (u32(part - 1) < 2) return set_mood(c, k, kMoodAngry, -1);
@@ -236,7 +262,7 @@ struct WingSpeeds {
 constexpr WingSpeeds kWingSeoul2{0x41855556, 0x41B1C71D, 0x41E87457, 0x41FA55E8, 0x41B1C71D, 0x42055556, 0x417A55E8, 0x41B2CFA6, 0x40D692C8};
 constexpr WingSpeeds kWingGeneva{0x41855554, 0x41B1C71B, 0x41E87455, 0x41FA55E5, 0x41B1C71B, 0x42055554, 0x417A55E5, 0x41B2CFA4, 0x40D692C6};
 
-// The 2002 builds' routine from Tokyo-Seoul v2.00 on (there).
+// The 2002 builds' routine from Tokyo-Seoul v2.00 on (0x1DE568 there).
 void wing_step_later(Car& c, const WingSpeeds& k) {
     const u8 kind = c.p.special;
     const int type = kind == 2 || kind == 8 || kind == 10 ? 1 : kind == 9 ? 2 : 0;

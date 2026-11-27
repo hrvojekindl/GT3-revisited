@@ -265,7 +265,7 @@ private:
                 ++show_.load_wait;
                 continue;
             }
-            // The menu car camera integrator: v += a / 60, v -= v c / 60, x += v / 60.
+            // The MenuCarCamera integrator: v += a / 60, v -= v c / 60, x += v / 60.
             auto spring = [](float& x, float& v, float target, float k, float c) {
                 v += (target - x) * k / 60.0f;
                 v -= v * c / 60.0f;
@@ -527,7 +527,7 @@ private:
             area = SDL_FRect{box.x - e.x * sx, box.y - (448 - e.y - e.h) * sy, 640 * sx, 448 * sy};
             // The championship trophy item draws 160 pixels left of centre (gt_mode §18, M).
             if (trophy) area.x -= 160 * sx;
-            // Race prizes (mini prize): the cup appears smaller and higher than the .prm camera
+            // Race prizes (MiniPrize): the cup appears smaller and higher than the .prm camera
             // over the full frame gives (M: fitted to the reference capture of the Sunday Cup
             // cup page: 0.86 x about the frame centre).
             if (mini) {
@@ -609,10 +609,13 @@ private:
         if (!t.tex) t.tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, w, h);
         if (!t.tex) return;
         SDL_Texture* prev = SDL_GetRenderTarget(r);
+        SDL_BlendMode prev_blend = SDL_BLENDMODE_BLEND;
+        SDL_GetRenderDrawBlendMode(r, &prev_blend);
         SDL_SetRenderTarget(r, t.tex);
         paint(w, h);
         SDL_FlushRenderer(r);
         SDL_SetRenderTarget(r, prev);
+        SDL_SetRenderDrawBlendMode(r, prev_blend);
         static const SDL_BlendMode kAdd = SDL_ComposeCustomBlendMode(
             SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_ADD, SDL_BLENDFACTOR_ZERO,
             SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_ADD);
@@ -637,11 +640,14 @@ private:
         if (!t.tex) t.tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, w, h);
         if (!t.tex) return;
         SDL_Texture* prev = SDL_GetRenderTarget(r);
+        SDL_BlendMode prev_blend = SDL_BLENDMODE_BLEND;
+        SDL_GetRenderDrawBlendMode(r, &prev_blend); // clear_picture and accumulate change it
         SDL_SetRenderTarget(r, t.tex);
         clear_picture(r);
         paint(t.tex, w, h);
         SDL_FlushRenderer(r);
         SDL_SetRenderTarget(r, prev);
+        SDL_SetRenderDrawBlendMode(r, prev_blend);
         const float o = std::clamp(opacity, 0.0f, 1.0f);
         SDL_SetTextureBlendMode(t.tex, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
         SDL_SetTextureColorModFloat(t.tex, o, o, o);
@@ -726,7 +732,7 @@ private:
             opt.paint = paint;
             race::CarSetup setup = race::car_setup_from_database(s->gt().db(), car);
             opt.wheel_spec = setup.wheels;
-            opt.body_mod = body_mod_for_car(s->gt().db(), car, paint);
+            opt.body_mod = body_mod_for_car(s->gt().db(), car, paint, data::CarScene::Menu);
             std::optional<Bytes> wheel_file;
             // A fitted wheel: the menus load the detailed menu/wheel/<code> model,
             // the race wheel/<code>.
@@ -739,6 +745,10 @@ private:
             if (menu_wheel || (menu_model && !wheel_file))
                 opt.stand_in_rim = [&app, model, rim = menu_wheel ? wheel : std::string()] {
                     return race_rim([&app](const std::string& p) { return app.vfs()->read(p); }, model, rim);
+                };
+            if (menu_model) // (a texture pack's picture for the race's tyre)
+                opt.other_tyre = [&app, model = model] {
+                    return race_tyre([&app](const std::string& p) { return app.vfs()->read(p); }, model);
                 };
             scene::Model m = load_car_model(*file, opt, model);
             // The floor shadow (node 6) is drawn on its own, on the floor: it stays out of the
